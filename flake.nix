@@ -2,7 +2,7 @@
   description = "WSdlly02's Codes Library";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
   outputs =
@@ -34,6 +34,7 @@
             float = pkgs.callPackage ./C/float.nix { };
             math = pkgs.callPackage ./C/math.nix { };
             pi = pkgs.callPackage ./C/pi.nix { };
+            boolean = pkgs.callPackage ./C/boolean.nix { };
           };
           inPython = { };
         }
