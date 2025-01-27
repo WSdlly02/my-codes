@@ -31,6 +31,9 @@
             agree = pkgs.callPackage ./C/agree.nix { };
             loops = pkgs.callPackage ./C/loops.nix { };
             var = pkgs.callPackage ./C/var.nix { };
+            float = pkgs.callPackage ./C/float.nix { };
+            math = pkgs.callPackage ./C/math.nix { };
+            pi = pkgs.callPackage ./C/pi.nix { };
           };
           inPython = { };
         }

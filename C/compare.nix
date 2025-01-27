@@ -13,8 +13,11 @@ stdenv.mkDerivation rec {
     libcs50
   ];
   buildPhase = ''
+    $CC $src -lcs50 -o ${pname}
+  '';
+  installPhase = ''
     mkdir -p $out/bin
-    $CC $src -o $out/bin/${pname} -lcs50
+    cp ${pname} $out/bin
   '';
   doCheck = false;
 }

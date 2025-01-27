@@ -1,19 +1,18 @@
 {
   stdenv,
-  libcs50,
 }:
 stdenv.mkDerivation rec {
-  pname = "name";
+  pname = "pi";
   version = "0.0.1";
   src = ./${pname}.c;
   dontUnpack = true;
   preferLocalBuild = true;
   allowSubstitutes = false;
   buildInputs = [
-    libcs50
+    # libcs50
   ];
   buildPhase = ''
-    $CC $src -lcs50 -o ${pname}
+    $CC $src -o ${pname}
   '';
   installPhase = ''
     mkdir -p $out/bin
