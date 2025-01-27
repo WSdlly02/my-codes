@@ -1,6 +1,6 @@
 {
   stdenv,
-  # libcs50,
+# libcs50,
 }:
 stdenv.mkDerivation {
   pname = "loops";
