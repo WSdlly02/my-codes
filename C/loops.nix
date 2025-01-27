@@ -2,17 +2,19 @@
   stdenv,
 # libcs50,
 }:
-stdenv.mkDerivation {
+stdenv.mkDerivation rec {
   pname = "loops";
   version = "0.0.1";
-  src = ./loops.c;
+  src = ./${pname}.c;
   dontUnpack = true;
+  preferLocalBuild = true;
+  allowSubstitutes = false;
   buildInputs = [
     # libcs50
   ];
   buildPhase = ''
     mkdir -p $out/bin
-    gcc $src -o $out/bin/loops
+    $CC $src -o $out/bin/${pname}
   '';
   doCheck = false;
 }

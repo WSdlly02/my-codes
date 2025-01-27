@@ -30,6 +30,7 @@
             compare = pkgs.callPackage ./C/compare.nix { };
             agree = pkgs.callPackage ./C/agree.nix { };
             loops = pkgs.callPackage ./C/loops.nix { };
+            var = pkgs.callPackage ./C/var.nix { };
           };
           inPython = { };
         }

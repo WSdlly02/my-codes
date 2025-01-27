@@ -1,20 +1,19 @@
 {
   stdenv,
-  libcs50,
 }:
 stdenv.mkDerivation rec {
-  pname = "name";
+  pname = "var";
   version = "0.0.1";
   src = ./${pname}.c;
   dontUnpack = true;
   preferLocalBuild = true;
   allowSubstitutes = false;
   buildInputs = [
-    libcs50
+    # libcs50
   ];
   buildPhase = ''
     mkdir -p $out/bin
-    $CC $src -o $out/bin/${pname} -lcs50
+    $CC $src -o $out/bin/${pname}
   '';
   doCheck = false;
 }
