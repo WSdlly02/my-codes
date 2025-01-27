@@ -4,7 +4,7 @@
 int main() {
     int a = 2;
     int b = 8;
-    int diff
+    int diff;
     if (a>b) {
         diff = a - b;
     }
