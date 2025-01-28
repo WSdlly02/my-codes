@@ -10,5 +10,5 @@ int main(void) {
     else if (answer == 'n' || answer == 'N')
     {
         printf("Not agreed.\n");
-    }
+    };
 }

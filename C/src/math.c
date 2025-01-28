@@ -10,5 +10,5 @@ int main() {
     int c = 3;
     double x_1 = (-b+sqrt(pow(b,2)-4*a*c))/2*a;
     double x_2 = (-b-sqrt(pow(b,2)-4*a*c))/2*a;
-    printf("x_1:%lf\nx_2:%lf",x_1,x_2);
+    printf("x_1:%lf\nx_2:%lf\n",x_1,x_2);
 }

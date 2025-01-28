@@ -23,19 +23,34 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          inherit (pkgs) callPackage;
         in
         {
-          inC = {
-            name = pkgs.callPackage ./C/name.nix { };
-            compare = pkgs.callPackage ./C/compare.nix { };
-            agree = pkgs.callPackage ./C/agree.nix { };
-            loops = pkgs.callPackage ./C/loops.nix { };
-            var = pkgs.callPackage ./C/var.nix { };
-            float = pkgs.callPackage ./C/float.nix { };
-            math = pkgs.callPackage ./C/math.nix { };
-            pi = pkgs.callPackage ./C/pi.nix { };
-            boolean = pkgs.callPackage ./C/boolean.nix { };
-          };
+          inC =
+            nixpkgs.lib.genAttrs
+              [
+                # We cannot read file names in Nix
+                "agree-cs50"
+                "boolean"
+                "compare-cs50"
+                "discount"
+                "float"
+                "loops"
+                "math"
+                "name-cs50"
+                "pi"
+                "var"
+              ]
+              (
+                packageName:
+                if (nixpkgs.lib.strings.hasSuffix "cs50" packageName) then
+                  callPackage ./C {
+                    cs50 = true;
+                    pname = packageName;
+                  }
+                else
+                  callPackage ./C { pname = packageName; }
+              );
           inPython = { };
         }
       );

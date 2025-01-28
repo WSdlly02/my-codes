@@ -2,7 +2,7 @@
 
 void echo(void)
 {
-    printf("Hello!");
+    printf("Hello!\n");
 }
 
 int main(void) {
@@ -11,9 +11,10 @@ int main(void) {
     {
         printf("Hello! i is %i now!\n",i);
         i += 1; // i = i+1; || i++;
-    }
+    };
     for (int i = 0; i < 3; i++)
     {
-        echo();printf("i is %i now!\n",i);
-    }
+        echo();
+        printf("i is %i now!\n",i);
+    };
 }
