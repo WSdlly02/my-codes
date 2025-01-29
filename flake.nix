@@ -12,6 +12,7 @@
     }@inputs:
     let
       forAllSystems = nixpkgs.lib.genAttrs [
+        # Currently supported systems
         "x86_64-linux"
         "aarch64-linux"
       ];
@@ -31,18 +32,23 @@
               [
                 # We cannot read file names in Nix
                 "agree-cs50"
+                "array"
                 "boolean"
                 "compare-cs50"
                 "discount"
                 "float"
+                "for"
                 "logical"
                 "loops"
                 "math"
                 "name-cs50"
                 "pi"
+                "pointer"
                 "scanf"
+                "string"
                 "switch"
                 "var"
+                "while"
               ]
               (
                 packageName:

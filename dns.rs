@@ -45,7 +45,7 @@ async fn main() {
         }
     }
     let mut keys: Vec<_> = linechart_inputs.keys().collect();
-    // 按大小顺序排列 `linechart_inputs` 的键，并打印`键:值``
+    // 按大小顺序排列 `linechart_inputs` 的键,并打印`键:值``
     keys.sort();
     println!("Line Chart inputs:\n");
     for key in keys {
@@ -56,7 +56,7 @@ async fn main() {
 }
 
 static DOMAINS: LazyLock<Vec<String>> = LazyLock::new(|| {
-    // 读取 domains.txt 文件，每一行一个域名。
+    // 读取 domains.txt 文件,每一行一个域名.
     let content = std::fs::read_to_string("domains.txt")
         .unwrap()
         .trim()
