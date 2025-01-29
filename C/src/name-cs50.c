@@ -1,7 +1,9 @@
 #include <cs50.h>
 #include <stdio.h>
 
-int main(void) {
-  string answer = get_string("What's your name? ");
-  printf("WSdlly02-PC\nHello, %s!\n",answer);
+int
+main (void)
+{
+  string answer = get_string ("What's your name? ");
+  printf ("WSdlly02-PC\nHello, %s!\n", answer);
 }

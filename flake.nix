@@ -35,10 +35,13 @@
                 "compare-cs50"
                 "discount"
                 "float"
+                "logical"
                 "loops"
                 "math"
                 "name-cs50"
                 "pi"
+                "scanf"
+                "switch"
                 "var"
               ]
               (
