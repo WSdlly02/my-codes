@@ -14,7 +14,7 @@ def forward_data(data, target_host, target_port):
 
 def main():
     listen_port = 12024
-    forward_host = '::'  # 将数据包转发到的目标主机（支持IPv4和IPv6）
+    forward_host = '::'  # 将数据包转发到的目标主机(支持IPv4和IPv6)
     forward_port = 22024
 
     # 创建一个IPv4和IPv6兼容的套接字

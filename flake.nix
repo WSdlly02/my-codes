@@ -44,6 +44,7 @@
                 "name-cs50"
                 "pi"
                 "pointer"
+                "readcsv"
                 "scanf"
                 "string"
                 "switch"

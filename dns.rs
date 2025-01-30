@@ -9,7 +9,7 @@ use tokio::task;
 const DOH_RESOLVE_BASE: &str = "https://223.5.5.5/resolve";
 // 查询域名的数量
 const QUERY_COUNT: usize = 20;
-// 统计区间大小（毫秒）
+// 统计区间大小(毫秒)
 const STATS_INTERVAL: u128 = 50;
 
 #[tokio::main]
