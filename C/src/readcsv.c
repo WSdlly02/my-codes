@@ -13,48 +13,56 @@ main (int argc, char *argv[])
 注意: argv[argc] = NULL
 */
 {
-  printf ("args:%d\n", argc);
   if (argc == 1)
     {
       printf ("用法: %s <CSV文件路径>\n", argv[0]);
       return EXIT_FAILURE;
     }
 
-  FILE *file = fopen (argv[1], "r");
-
-  if (file == NULL)
-    {
-      perror ("无法打开文件");
-      return EXIT_FAILURE;
-    }
-
   char line[MAX_LINE_SIZE];
   int is_first_line = 1; // 用于跳过标题行
-
-  while (fgets (line, sizeof (line), file))
+  int weeks = 0;
+  while (weeks < 16)
     {
-      // 去除行末的换行符
-      line[strcspn (line, "\n")] = '\0';
+      weeks = weeks + 1;
 
-      // 跳过标题行
-      if (is_first_line)
+      FILE *file = fopen (argv[1], "r");
+
+      if (file == NULL)
         {
-          is_first_line = 0;
-          continue;
+          perror ("");
+          return EXIT_FAILURE;
         }
 
-      // 使用 strtok 按逗号分割行
-      char *name = strtok (line, ",");
-      char *age = strtok (NULL, ",");
-      char *city = strtok (NULL, ",");
-
-      // 按照指定格式输出
-      if (name != NULL && age != NULL)
+      while (fgets (line, sizeof (line), file))
         {
-          printf ("Name: %s, Age: %s, City: %s\n", name, age, city);
+          // 去除行末的换行符
+          line[strcspn (line, "\n")] = '\0';
+
+          // 跳过标题行
+          if (is_first_line)
+            {
+              is_first_line = 0;
+              continue;
+            }
+
+          // 使用 strtok 按逗号分割行
+          char *class_time = strtok (line, ",");
+          char *monday = strtok (NULL, ",");
+          char *tuesday = strtok (NULL, ",");
+          char *wednesday = strtok (NULL, ",");
+          char *thursday = strtok (NULL, ",");
+          char *friday = strtok (NULL, ",");
+
+          // 按照指定格式输出
+
+          if (class_time != NULL)
+            {
+              printf ("当前周数: %d, 上课时间: %s, 星期一: %s, 星期二: %s\n",
+                      weeks, class_time, monday, tuesday);
+            }
         }
+      fclose (file);
     }
-
-  fclose (file);
   return EXIT_SUCCESS;
 }
