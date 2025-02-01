@@ -24,7 +24,10 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          inherit (pkgs) callPackage;
+          inherit (pkgs)
+            callPackage
+            writeShellScriptBin
+            ;
         in
         {
           inC =
@@ -62,7 +65,23 @@
                 else
                   callPackage ./C { pname = packageName; }
               );
-          inPython = { };
+          inPython =
+            nixpkgs.lib.genAttrs
+              [
+                "project-routine-scheduler"
+                "roots-resolver"
+              ]
+              (
+                packageName:
+                # runCommandLocal just running commands without leaving any executable files
+                # But nix run .# requires a binary to execute
+                # It's just suitable for installing some misc files
+                # Shebang will inherit env vars
+                # But cannot export $PATH vars
+                writeShellScriptBin "${packageName}" ''
+                  python3.12 ~/my-codes/Python/${packageName}.py $@
+                ''
+              );
         }
       );
     };
