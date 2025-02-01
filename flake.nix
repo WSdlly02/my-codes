@@ -44,6 +44,7 @@
                 "name-cs50"
                 "pi"
                 "pointer"
+                "project-routine-scheduler"
                 "readcsv"
                 "scanf"
                 "string"
