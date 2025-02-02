@@ -79,7 +79,7 @@
                 # Shebang will inherit env vars
                 # But cannot export $PATH vars
                 writeShellScriptBin "${packageName}" ''
-                  python3.12 ~/my-codes/Python/${packageName}.py $@
+                  python3.12 ./Python/${packageName}.py $@
                 ''
               );
         }
