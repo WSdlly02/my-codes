@@ -30,6 +30,8 @@
             ;
         in
         {
+          python312Env = callPackage ./Nix/pkgs/python312Env.nix { };
+          python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
           inC =
             nixpkgs.lib.genAttrs
               [
@@ -73,13 +75,13 @@
               ]
               (
                 packageName:
-                # runCommandLocal just running commands without leaving any executable files
+                # pkgs.runCommandLocal just running commands without leaving any executable files
                 # But nix run .# requires a binary to execute
                 # It's just suitable for installing some misc files
                 # Shebang will inherit env vars
                 # But cannot export $PATH vars
-                writeShellScriptBin "${packageName}" ''
-                  python3.12 ./Python/${packageName}.py $@
+                writeShellScriptBin "${packageName}-wrapper" ''
+                  ${inputs.self.packages."${pkgs.system}".python312Env}/bin/python3.12 ./Python/${packageName}.py $@
                 ''
               );
         }
