@@ -72,7 +72,7 @@ main (int argc, char *argv[])
             {
               // 将字符串复制到三维数组中
               snprintf (data[i][row][col], MAX_STRING_LENGTH, "%s-%d", token,
-                        i + 1); // 示例：将第一维的值附加到字符串
+                        i + 1); // 示例:将第一维的值附加到字符串
             }
           token = strtok (NULL, ",");
           col++;
@@ -83,7 +83,7 @@ main (int argc, char *argv[])
   fclose (file);
 
   // 打印三维数组内容
-  printf ("三维数组内容：\n");
+  printf ("三维数组内容:\n");
   for (int i = 0; i < FIRST_DIM; i++)
     {
       printf ("第一维: %d\n", i + 1);
