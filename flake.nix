@@ -84,6 +84,18 @@
                   ${inputs.self.packages."${pkgs.system}".python312Env}/bin/python3.12 ./Python/${packageName}.py $@
                 ''
               );
+          inRust =
+            nixpkgs.lib.genAttrs
+              [
+                "hello-world"
+              ]
+              (
+                packageName:
+                callPackage ./Rust {
+                  pname = packageName;
+                  cargoHash = "sha256-25bKvKeR+dzI+Xu7nMR4HwhyM+6YgW+eNgA74eSf9SQ=";
+                }
+              );
         }
       );
     };
