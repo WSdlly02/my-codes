@@ -93,7 +93,6 @@
                 packageName:
                 callPackage ./Rust {
                   pname = packageName;
-                  cargoHash = "sha256-25bKvKeR+dzI+Xu7nMR4HwhyM+6YgW+eNgA74eSf9SQ=";
                 }
               );
         }
