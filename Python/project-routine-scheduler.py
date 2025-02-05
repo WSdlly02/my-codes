@@ -1,6 +1,7 @@
 import sys
 import pandas as pd
 import numpy as np
+import re
 
 num_map = {
     "1": "一",  # 键必须immutable
@@ -25,32 +26,36 @@ def number2shuzi(day):
 
 
 def split_string_in_column(source):
+    # 输入一个字符串"a;b"
     content = source.split(";")
     print(content)
+    # 返回一个字符串列表 ['a','b']
     return content
 
 
 def extract_content_in_parentheses(source):
-    start = source.find("(")
-    end = source.find(")")
+    content = [re.search(r"\((.*?)\)", s).group(1) for s in source]
+    return content
+    # start = source.find("(")
+    # end = source.find(")")
 
-    # 检查括号是否存在
-    if start == -1 or end == -1:
-        # print(f"错误：字符串 '{source}' 中没有括号或格式不正确。")
-        content = source
-        return content
-    else:
-        # 提取括号内的内容
-        content = source[start + 1 : end]
-        return content
+    # # 检查括号是否存在
+    # if start == -1 or end == -1:
+    #     # print(f"错误：字符串 '{source}' 中没有括号或格式不正确。")
+    #     content = source
+    #     return content
+    # else:
+    #     # 提取括号内的内容
+    #     content = source[start + 1 : end]
+    #     return content
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("错误:请提供CSV文件的路径作为命令行参数")
-        exit(1)
+    # if len(sys.argv) < 2:
+    #     print("错误:请提供CSV文件的路径作为命令行参数")
+    #     exit(1)
 
-    csv_path = sys.argv[1]
+    csv_path = "./Static/class-schedule.csv"  # sys.argv[1]
 
     # 读取CSV文件(跳过第一行，无表头，保留字符串)
     csv_file = pd.read_csv(

@@ -88,6 +88,7 @@
             nixpkgs.lib.genAttrs
               [
                 "hello-world"
+                "guessing-game"
               ]
               (
                 packageName:
