@@ -28,9 +28,14 @@
     requests
   ])
 */
-{ python312 }:
+{
+  extraPackages ? [ ],
+  python312,
+}:
 python312.withPackages (
-  ps: with ps; [
+  ps:
+  with ps;
+  [
     numpy
     pandas
     requests
@@ -40,4 +45,5 @@ python312.withPackages (
     sympy
     virtualenv
   ]
+  ++ extraPackages
 )

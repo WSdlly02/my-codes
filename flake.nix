@@ -18,6 +18,29 @@
       ];
     in
     {
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          inherit (pkgs)
+            callPackage
+            ;
+        in
+        {
+          default = pkgs.mkShell {
+            packages = [
+              (inputs.self.packages."${pkgs.system}".python312Env.override {
+                extraPackages = with pkgs.python312Packages; [
+                  icalendar # For generating calendar
+                ];
+              })
+            ];
+            shellHook = ''
+              fish
+            '';
+          };
+        }
+      );
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-rfc-style);
 
       packages = forAllSystems (

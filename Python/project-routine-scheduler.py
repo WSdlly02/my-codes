@@ -34,7 +34,13 @@ def split_string_in_column(source):
 
 
 def extract_content_in_parentheses(source):
-    content = [re.search(r"\((.*?)\)", s).group(1) for s in source]
+    content = []
+    for s in source:
+        match = re.search(r"\((.*?)\)", s)
+    if match:
+        content.append(match.group(1))  # 提取括号内容
+    else:
+        print(f"警告：'{s}' 格式无效，已跳过")
     return content
     # start = source.find("(")
     # end = source.find(")")
