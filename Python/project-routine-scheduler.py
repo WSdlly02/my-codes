@@ -40,14 +40,14 @@ def extract_content_in_parentheses(source):
     if match:
         content.append(match.group(1))  # 提取括号内容
     else:
-        print(f"警告：'{s}' 格式无效，已跳过")
+        print(f"警告:'{s}' 格式无效，已跳过")
     return content
     # start = source.find("(")
     # end = source.find(")")
 
     # # 检查括号是否存在
     # if start == -1 or end == -1:
-    #     # print(f"错误：字符串 '{source}' 中没有括号或格式不正确。")
+    #     # print(f"错误:字符串 '{source}' 中没有括号或格式不正确。")
     #     content = source
     #     return content
     # else:

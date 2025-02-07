@@ -23,13 +23,13 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           inherit (pkgs)
-            callPackage
+            mkShell
             ;
         in
         {
-          default = pkgs.mkShell {
+          default = mkShell {
             packages = [
-              (inputs.self.packages."${pkgs.system}".python312Env.override {
+              (inputs.self.packages."${system}".python312Env.override {
                 extraPackages = with pkgs.python312Packages; [
                   icalendar # For generating calendar
                 ];
@@ -53,8 +53,10 @@
             ;
         in
         {
+          ####################
           python312Env = callPackage ./Nix/pkgs/python312Env.nix { };
           python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
+          ####################
           inC =
             nixpkgs.lib.genAttrs
               [
@@ -104,7 +106,7 @@
                 # Shebang will inherit env vars
                 # But cannot export $PATH vars
                 writeShellScriptBin "${packageName}-wrapper" ''
-                  ${inputs.self.packages."${pkgs.system}".python312Env}/bin/python3.12 ./Python/${packageName}.py $@
+                  ${inputs.self.packages."${system}".python312Env}/bin/python3.12 ./Python/${packageName}.py $@
                 ''
               );
           inRust =
