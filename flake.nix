@@ -59,32 +59,35 @@
           ####################
           inC =
             nixpkgs.lib.genAttrs
-              [
-                # We cannot read file names in Nix
-                "agree-cs50"
-                "array"
-                "boolean"
-                "compare-cs50"
-                "discount"
-                "float"
-                "for"
-                "logical"
-                "loops"
-                "math"
-                "name-cs50"
-                "pi"
-                "pointer"
-                "project-routine-scheduler"
-                "readcsv"
-                "scanf"
-                "string"
-                "switch"
-                "var"
-                "while"
-              ]
+              (
+                [
+                  # We cannot read file names in Nix
+                  "agree-cs50"
+                  "array"
+                  "boolean"
+                  "compare-cs50"
+                  "discount"
+                  "float"
+                  "for"
+                  "logical"
+                  "loops"
+                  "math"
+                  "name-cs50"
+                  "pi"
+                  "pointer"
+                  "project-routine-scheduler"
+                  "readcsv"
+                  "scanf"
+                  "string"
+                  "switch"
+                  "var"
+                  "while"
+                ]
+                ++ nixpkgs.lib.forEach [ 1 2 ] (x: "cOneHundred-${toString x}")
+              )
               (
                 packageName:
-                if (nixpkgs.lib.strings.hasSuffix "cs50" packageName) then
+                if (nixpkgs.lib.hasSuffix "cs50" packageName) then
                   callPackage ./C {
                     cs50 = true;
                     pname = packageName;
@@ -95,8 +98,10 @@
           inPython =
             nixpkgs.lib.genAttrs
               [
+                "class-schedule"
                 "project-routine-scheduler"
                 "roots-resolver"
+                "teaching-week-reminder"
               ]
               (
                 packageName:
@@ -106,7 +111,8 @@
                 # Shebang will inherit env vars
                 # But cannot export $PATH vars
                 writeShellScriptBin "${packageName}-wrapper" ''
-                  ${inputs.self.packages."${system}".python312Env}/bin/python3.12 ./Python/${packageName}.py $@
+                  # ${inputs.self.packages."${system}".python312Env}/bin/python3.12 ./Python/${packageName}.py $@
+                  python3.12 ./Python/${packageName}.py $@
                 ''
               );
           inRust =
