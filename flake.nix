@@ -83,7 +83,7 @@
                   "var"
                   "while"
                 ]
-                ++ nixpkgs.lib.forEach [ 1 2 ] (x: "cOneHundred-${toString x}")
+                ++ nixpkgs.lib.forEach [ 1 2 3 4 6 ] (x: "cOneHundred-${toString x}")
               )
               (
                 packageName:
