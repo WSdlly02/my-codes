@@ -3,30 +3,33 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
   outputs =
     {
       self,
       nixpkgs,
+      flake-utils,
     }@inputs:
     let
-      forAllSystems = nixpkgs.lib.genAttrs [
-        # Currently supported systems
+      systems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
     in
-    {
-      devShells = forAllSystems (
-        system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-          inherit (pkgs)
-            mkShell
-            ;
-        in
-        {
+    flake-utils.lib.eachSystem systems (
+      system:
+      let
+        pkgs = nixpkgs.legacyPackages."${system}";
+        inherit (pkgs)
+          callPackage
+          mkShell
+          writeShellScriptBin
+          ;
+      in
+      {
+        devShells = {
           default = mkShell {
             packages = [
               (inputs.self.packages."${system}".python312Env.override {
@@ -39,20 +42,10 @@
               fish
             '';
           };
-        }
-      );
-      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-rfc-style);
+        };
+        formatter = pkgs.nixfmt-rfc-style;
 
-      packages = forAllSystems (
-        system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-          inherit (pkgs)
-            callPackage
-            writeShellScriptBin
-            ;
-        in
-        {
+        packages = {
           ####################
           python312Env = callPackage ./Nix/pkgs/python312Env.nix { };
           python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
@@ -127,7 +120,7 @@
                   pname = packageName;
                 }
               );
-        }
-      );
-    };
+        };
+      }
+    );
 }
