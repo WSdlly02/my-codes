@@ -17,7 +17,11 @@
     }@inputs:
     flake-parts.lib.mkFlake { inherit inputs; } {
       perSystem =
-        { inputs', ... }:
+        {
+          inputs',
+          self',
+          ...
+        }:
         let
           pkgs = inputs'.nixpkgs.legacyPackages;
           inherit (pkgs)
@@ -30,7 +34,7 @@
           devShells = {
             default = mkShell {
               packages = [
-                (inputs'.self.legacyPackages.python312Env.override {
+                (self'.legacyPackages.python312Env.override {
                   extraPackages = with pkgs.python312Packages; [
                     icalendar # For generating calendar
                   ];
@@ -102,7 +106,7 @@
                   # Shebang will inherit env vars
                   # But cannot export $PATH vars
                   writeShellScriptBin "${packageName}-wrapper" ''
-                    # ${inputs'.self.legacyPackages.python312Env}/bin/python3.12 ./Python/${packageName}.py $@
+                    # ${self'.legacyPackages.python312Env}/bin/python3.12 ./Python/${packageName}.py $@
                     python3.12 ./Python/${packageName}.py $@
                   ''
                 );
