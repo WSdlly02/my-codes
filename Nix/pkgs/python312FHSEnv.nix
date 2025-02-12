@@ -46,7 +46,7 @@ buildFHSEnv {
       libdrm
       ninja
       ncurses
-      inputs.self.packages."${system}".python312Env
+      inputs.self.legacyPackages."${system}".python312Env
       udev
       zstd
     ]
