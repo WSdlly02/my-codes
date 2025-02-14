@@ -6,4 +6,4 @@ let
   # fib : int -> int
   fib = n: fib' n 0 1;
 in
-fib 5
+fib 15

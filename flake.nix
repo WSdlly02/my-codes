@@ -36,7 +36,9 @@
               packages = [
                 (self'.legacyPackages.python312Env.override {
                   extraPackages = with pkgs.python312Packages; [
-                    icalendar # For generating calendar
+                    flask
+                    psutil
+                    # icalendar # For generating calendar
                   ];
                 })
               ];
@@ -78,7 +80,15 @@
                     "var"
                     "while"
                   ]
-                  ++ nixpkgs.lib.forEach [ 1 2 3 4 6 ] (x: "cOneHundred-${toString x}")
+                  ++ nixpkgs.lib.forEach [
+                    1
+                    2
+                    3
+                    4
+                    5
+                    6
+                    8
+                  ] (x: "cOneHundred-${toString x}")
                 )
                 (
                   packageName:
@@ -113,8 +123,10 @@
             inRust =
               nixpkgs.lib.genAttrs
                 [
-                  "hello-world"
+                  "fibonacci"
                   "guessing-game"
+                  "hello-world"
+                  "temperature-converter"
                 ]
                 (
                   packageName:

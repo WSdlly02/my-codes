@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>服务器监控面板</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+  <div class="dashboard">
+    <h1>服务器实时监控</h1>
+
+    <!-- CPU 使用率 -->
+    <div class="card">
+      <h2>CPU 使用率</h2>
+      <canvas id="cpuChart"></canvas>
+    </div>
+
+    <!-- 内存使用 -->
+    <div class="card">
+      <h2>内存使用</h2>
+      <div id="memoryInfo"></div>
+    </div>
+
+    <!-- 网络流量 -->
+    <div class="card">
+      <h2>网络流量</h2>
+      <div id="networkInfo"></div>
+    </div>
+  </div>
+
+  <script>
+    // 初始化 CPU 图表
+    const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+    const cpuChart = new Chart(cpuCtx, {
+      type: 'doughnut',
+      data: {
+        labels: ['已使用', '空闲'],
+        datasets: [{
+          data: [0, 100],
+          backgroundColor: ['#FF6384', '#36A2EB']
+        }]
+      },
+      options: { responsive: true }
+    });
+
+    // 定时获取数据
+    function updateData() {
+      fetch('/api/data')
+        .then(response => response.json())
+        .then(data => {
+          // 更新 CPU 图表
+          cpuChart.data.datasets[0].data = [data.cpu, 100 - data.cpu];
+          cpuChart.update();
+
+          // 更新内存信息
+          document.getElementById('memoryInfo').innerHTML = `
+                        <p>总内存: ${data.memory.total} GB</p>
+                        <p>已使用: ${data.memory.used} GB (${data.memory.percent}%)</p>
+                    `;
+
+          // 更新网络信息
+          document.getElementById('networkInfo').innerHTML = `
+                        <p>上传: ${data.network.sent} MB</p>
+                        <p>下载: ${data.network.recv} MB</p>
+                    `;
+        });
+    }
+
+    // 每 2 秒更新一次
+    setInterval(updateData, 2000);
+    updateData();  // 首次加载立即更新
+  </script>
+</body>
+
+</html>
