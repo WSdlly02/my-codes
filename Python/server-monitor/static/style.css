@@ -28,3 +28,8 @@ h2 {
   color: #333;
   margin-top: 0;
 }
+
+/* 柱状图容器高度 */
+#cpuCoresChart {
+  max-height: 300px;
+}

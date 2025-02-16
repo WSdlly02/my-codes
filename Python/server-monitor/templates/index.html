@@ -11,10 +11,16 @@
   <div class="dashboard">
     <h1>服务器实时监控</h1>
 
-    <!-- CPU 使用率 -->
+    <!-- CPU 总体使用率 -->
     <div class="card">
-      <h2>CPU 使用率</h2>
+      <h2>CPU 总体使用率</h2>
       <canvas id="cpuChart"></canvas>
+    </div>
+
+    <!-- CPU 核心占用 -->
+    <div class="card">
+      <h2>CPU 核心占用</h2>
+      <canvas id="cpuCoresChart"></canvas>
     </div>
 
     <!-- 内存使用 -->
@@ -31,7 +37,7 @@
   </div>
 
   <script>
-    // 初始化 CPU 图表
+    // 初始化 CPU 总体使用率图表
     const cpuCtx = document.getElementById('cpuChart').getContext('2d');
     const cpuChart = new Chart(cpuCtx, {
       type: 'doughnut',
@@ -45,22 +51,46 @@
       options: { responsive: true }
     });
 
-    // 定时获取数据
+    // 初始化 CPU 核心占用柱状图
+    const cpuCoresCtx = document.getElementById('cpuCoresChart').getContext('2d');
+    const cpuCoresChart = new Chart(cpuCoresCtx, {
+      type: 'bar',
+      data: {
+        labels: [],  // 动态生成核心标签（如 Core 1, Core 2）
+        datasets: [{
+          label: 'CPU 核心占用率 (%)',
+          data: [],
+          backgroundColor: '#4BC0C0'
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          y: { max: 100 }
+        }
+      }
+    });
+
+    // 动态更新数据
     function updateData() {
       fetch('/api/data')
         .then(response => response.json())
         .then(data => {
-          // 更新 CPU 图表
+          // 更新 CPU 总体使用率
           cpuChart.data.datasets[0].data = [data.cpu, 100 - data.cpu];
           cpuChart.update();
 
-          // 更新内存信息
+          // 更新 CPU 核心占用柱状图
+          const cores = data.cpu_cores;
+          cpuCoresChart.data.labels = cores.map((_, i) => `Core ${i + 1}`);
+          cpuCoresChart.data.datasets[0].data = cores;
+          cpuCoresChart.update();
+
+          // 更新内存和网络信息
           document.getElementById('memoryInfo').innerHTML = `
                         <p>总内存: ${data.memory.total} GB</p>
                         <p>已使用: ${data.memory.used} GB (${data.memory.percent}%)</p>
                     `;
-
-          // 更新网络信息
           document.getElementById('networkInfo').innerHTML = `
                         <p>上传: ${data.network.sent} MB</p>
                         <p>下载: ${data.network.recv} MB</p>
@@ -68,9 +98,8 @@
         });
     }
 
-    // 每 2 秒更新一次
     setInterval(updateData, 2000);
-    updateData();  // 首次加载立即更新
+    updateData();
   </script>
 </body>
 
