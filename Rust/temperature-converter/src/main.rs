@@ -25,7 +25,7 @@ fn main() {
     } else if input_method == 2 {
         output_temperature = (input_temperature - 32.0) * 5.0 / 9.0;
     } else {
-        process::exit(1);
+        process::exit(1)
     }
     println!("转换后的温度是{output_temperature}度");
 }

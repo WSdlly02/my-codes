@@ -1,21 +1,24 @@
 {
-  cs50 ? false,
   lib,
-  libcs50,
+  packageName,
   pname,
   stdenv,
 }:
 stdenv.mkDerivation {
   inherit pname;
   version = "0.0.1";
-  src = ./src/${pname}.c;
+  src =
+    if (lib.hasPrefix "cOneHundred" pname) then
+      ./src/cOneHundred/${packageName}.c
+    else
+      ./src/${pname}.c;
   dontUnpack = true;
   preferLocalBuild = true;
   allowSubstitutes = false;
   buildInputs = [
-  ] ++ lib.optionals cs50 [ libcs50 ];
+  ];
   buildPhase = ''
-    $CC $src ${lib.optionalString cs50 "-lcs50"} -o ${pname}
+    $CC $src -o ${pname}
   '';
   installPhase = ''
     mkdir -p $out/bin

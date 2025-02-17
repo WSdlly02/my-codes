@@ -56,50 +56,57 @@
             ####################
             inC =
               nixpkgs.lib.genAttrs
-                (
-                  [
-                    # We cannot read file names in Nix
-                    "agree-cs50"
-                    "array"
-                    "boolean"
-                    "compare-cs50"
-                    "discount"
-                    "float"
-                    "for"
-                    "logical"
-                    "loops"
-                    "math"
-                    "name-cs50"
-                    "pi"
-                    "pointer"
-                    "project-routine-scheduler"
-                    "readcsv"
-                    "scanf"
-                    "string"
-                    "switch"
-                    "var"
-                    "while"
-                  ]
-                  ++ nixpkgs.lib.forEach [
-                    1
-                    2
-                    3
-                    4
-                    5
-                    6
-                    8
-                  ] (x: "cOneHundred-${toString x}")
-                )
+                [
+                  "array"
+                  "boolean"
+                  "discount"
+                  "fibonacci"
+                  "float"
+                  "for"
+                  "logical"
+                  "loops"
+                  "math"
+                  "pi"
+                  "pointer"
+                  "project-routine-scheduler"
+                  "readcsv"
+                  "scanf"
+                  "string"
+                  "switch"
+                  "test"
+                  "var"
+                  "while"
+                ]
                 (
                   packageName:
-                  if (nixpkgs.lib.hasSuffix "cs50" packageName) then
-                    callPackage ./C {
-                      cs50 = true;
-                      pname = packageName;
-                    }
-                  else
-                    callPackage ./C { pname = packageName; }
-                );
+                  callPackage ./C {
+                    inherit packageName;
+                    pname = packageName;
+                  }
+                )
+              // {
+                cOneHundred =
+                  nixpkgs.lib.genAttrs
+                    (nixpkgs.lib.forEach [
+                      1
+                      2
+                      3
+                      4
+                      5
+                      6
+                      # 7 9 10 is skipped
+                      8
+                      11
+                      12
+                    ] (x: toString x))
+                    (
+                      packageName:
+                      callPackage ./C {
+                        inherit packageName;
+                        pname = "cOneHundred-" + "${packageName}";
+                      }
+                    );
+              };
             inPython =
               nixpkgs.lib.genAttrs
                 [
