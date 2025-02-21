@@ -18,7 +18,7 @@ stdenv.mkDerivation {
   buildInputs = [
   ];
   buildPhase = ''
-    $CC $src -o ${pname}
+    $CC $src -Wall -Werror -std=c17 -o ${pname}
   '';
   installPhase = ''
     mkdir -p $out/bin

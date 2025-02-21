@@ -3,7 +3,7 @@
 int
 main ()
 {
-  int i, j, count;
+  int i, j;
   for (i = 101; i <= 200; i++)
     {
       for (j = 2; j < i; j++)
