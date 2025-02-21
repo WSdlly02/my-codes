@@ -60,6 +60,7 @@
                   "array"
                   "boolean"
                   "discount"
+                  ##"duplicated-file-searcher"
                   "fibonacci"
                   "float"
                   "for"
@@ -111,6 +112,8 @@
               nixpkgs.lib.genAttrs
                 [
                   "class-schedule"
+                  "duplicated-file-searcher"
+                  "fibonacci"
                   "project-routine-scheduler"
                   "roots-resolver"
                   "teaching-week-reminder"
