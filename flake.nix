@@ -38,7 +38,7 @@
                   extraPackages = with pkgs.python312Packages; [
                     flask
                     psutil
-                    # icalendar # For generating calendar
+                    icalendar # For generating calendar
                   ];
                 })
               ];
