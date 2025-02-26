@@ -9,13 +9,13 @@ fn fib(i: i32, n: i32, m: i32) -> i32 {
     }
 }
 fn main() {
-    let mut step_str = String::new();
+    let mut step = String::new();
     println!("请输入要计算的斐波那契数列阶数:");
     io::stdin()
-        .read_line(&mut step_str)
+        .read_line(&mut step)
         .expect("Failed to read line");
 
-    let step: i32 = match step_str.trim().parse() {
+    let step: i32 = match step.trim().parse() {
         Ok(num) => num,
         Err(_) => {
             println!("错误:n不是一个自然数");
