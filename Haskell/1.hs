@@ -1,0 +1,1 @@
+amdYes x = if x == "amd" then "amd yes!" else x

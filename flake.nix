@@ -23,7 +23,7 @@
           ...
         }:
         let
-          pkgs = inputs'.nixpkgs.legacyPackages;
+          pkgs = inputs'.nixpkgs.legacyPackages; # can be defined in arguments
           inherit (pkgs)
             callPackage
             mkShell
@@ -46,12 +46,26 @@
                 fish
               '';
             };
+            haskell = mkShell {
+              packages = with pkgs; [
+                haskell.compiler.ghc912
+              ];
+              shellHook = ''
+                fish
+              '';
+            };
           };
+
           formatter = pkgs.nixfmt-rfc-style;
 
           legacyPackages = {
             ####################
-            python312Env = callPackage ./Nix/pkgs/python312Env.nix { };
+            python312Env = callPackage ./Nix/pkgs/python312Env.nix {
+              extraPackages = with pkgs.python312Packages; [
+                flask
+                psutil
+              ];
+            };
             python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
             ####################
             inC =
