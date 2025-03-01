@@ -48,7 +48,7 @@
             };
             haskell = mkShell {
               packages = with pkgs; [
-                haskell.compiler.ghc912
+                ghc
               ];
               shellHook = ''
                 fish
@@ -122,6 +122,10 @@
                       }
                     );
               };
+            inHaskell = nixpkgs.lib.genAttrs [
+              "cliargs"
+              "input"
+            ] (packageName: callPackage ./Haskell { pname = packageName; });
             inPython =
               nixpkgs.lib.genAttrs
                 [
