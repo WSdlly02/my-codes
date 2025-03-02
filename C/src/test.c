@@ -3,7 +3,11 @@
 int
 main ()
 {
-  char buf[100];
-  gets (buf); // C11 起被移除，需改用 fgets()
-  return 0;
+  int day, weekday;
+  if (scanf ("%d", &day))
+    {
+      weekday = (day - 1) % 7;
+      char *weekday_cond[7] = { "三", "四", "五", "六", "日", "一", "二" };
+      printf ("%s\n", weekday_cond[weekday]);
+    }
 }
