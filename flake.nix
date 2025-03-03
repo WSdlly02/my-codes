@@ -36,19 +36,9 @@
               packages = [
                 (self'.legacyPackages.python312Env.override {
                   extraPackages = with pkgs.python312Packages; [
-                    flask
-                    psutil
                     icalendar # For generating calendar
                   ];
                 })
-              ];
-              shellHook = ''
-                fish
-              '';
-            };
-            haskell = mkShell {
-              packages = with pkgs; [
-                ghc
               ];
               shellHook = ''
                 fish
@@ -63,6 +53,7 @@
             python312Env = callPackage ./Nix/pkgs/python312Env.nix {
               extraPackages = with pkgs.python312Packages; [
                 flask
+                rpi-gpio
                 psutil
               ];
             };
