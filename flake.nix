@@ -36,6 +36,7 @@
               packages = [
                 (self'.legacyPackages.python312Env.override {
                   extraPackages = with pkgs.python312Packages; [
+                    opencv4
                     icalendar # For generating calendar
                   ];
                 })
