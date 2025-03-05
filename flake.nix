@@ -36,7 +36,10 @@
               packages = [
                 (self'.legacyPackages.python312Env.override {
                   extraPackages = with pkgs.python312Packages; [
+                    flask
                     opencv4
+                    rpi-gpio
+                    psutil
                     icalendar # For generating calendar
                   ];
                 })

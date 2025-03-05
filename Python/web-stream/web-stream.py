@@ -1,52 +1,66 @@
-# 保存为 web_stream.py
+# web_stream_fixed.py
 import cv2
 from flask import Flask, Response
 import threading
+import logging
 
-# 初始化 Flask 应用
+# 配置日志（调试用）
+logging.basicConfig(level=logging.INFO)
+
+# 初始化 Flask
 app = Flask(__name__)
 
-# 摄像头配置（根据实际设备路径调整）
-CAMERA_DEVICE = 0  # 通常为 /dev/video0
-FRAME_WIDTH = 640  # 分辨率可调整
+# 摄像头配置
+CAMERA_DEVICE = "/dev/video0"  # 明确指定设备路径
+FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 
 
-# 创建全局摄像头对象（线程安全）
+# 摄像头类（带错误处理）
 class Camera:
     def __init__(self):
-        self.cap = cv2.VideoCapture(CAMERA_DEVICE)
+        self.cap = cv2.VideoCapture(CAMERA_DEVICE, cv2.CAP_V4L2)
+        if not self.cap.isOpened():
+            raise RuntimeError(f"无法打开摄像头 {CAMERA_DEVICE}")
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+        self.cap.set(cv2.CAP_PROP_FPS, 15)
         self.lock = threading.Lock()
 
     def get_frame(self):
         with self.lock:
-            ret, frame = self.cap.read()
-            if not ret:
+            try:
+                ret, frame = self.cap.read()
+                if not ret:
+                    logging.error("摄像头读取失败")
+                    return None
+                ret, jpeg = cv2.imencode(".jpg", frame)
+                if not ret:
+                    logging.error("JPEG 编码失败")
+                    return None
+                return jpeg.tobytes()
+            except Exception as e:
+                logging.error(f"捕获帧错误: {e}")
                 return None
-            # 转换为 JPEG 格式
-            ret, jpeg = cv2.imencode(".jpg", frame)
-            return jpeg.tobytes()
 
 
-# 创建全局摄像头实例
-camera = Camera()
+# 初始化摄像头
+try:
+    camera = Camera()
+except Exception as e:
+    logging.critical(f"摄像头初始化失败: {e}")
+    exit(1)
 
 
 def generate_frames():
-    """视频流生成器"""
     while True:
         frame = camera.get_frame()
-        if frame is None:
-            break
-        # 生成 MJPEG 流
-        yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+        if frame:
+            yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
 
 
 @app.route("/video_feed")
 def video_feed():
-    """视频流路由"""
     return Response(
         generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame"
     )
@@ -54,14 +68,11 @@ def video_feed():
 
 @app.route("/")
 def index():
-    """主页显示视频播放器"""
     return """
     <html>
-      <head>
-        <title>OV5647 Live Stream</title>
-      </head>
+      <head><title>OV5647 实时画面</title></head>
       <body>
-        <h1>Live Stream</h1>
+        <h1>OV5647 实时画面</h1>
         <img src="/video_feed" width="640" height="480">
       </body>
     </html>
@@ -69,9 +80,4 @@ def index():
 
 
 if __name__ == "__main__":
-    # 检查摄像头是否正常打开
-    if not camera.cap.isOpened():
-        raise RuntimeError("无法打开摄像头，请检查设备连接和权限！")
-
-    # 启动 Flask 服务器
     app.run(host="0.0.0.0", port=5000, threaded=True)
