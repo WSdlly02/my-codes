@@ -33,7 +33,7 @@
         {
           devShells = {
             default = mkShell {
-              packages = [
+              packages = with pkgs; [
                 (self'.legacyPackages.python312Env.override {
                   extraPackages = with pkgs.python312Packages; [
                     flask
