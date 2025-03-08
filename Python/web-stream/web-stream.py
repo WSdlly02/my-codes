@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
 # 摄像头配置
-CAMERA_DEVICE = "/dev/video0"  # 明确指定设备路径
+CAMERA_DEVICE = "/dev/media0"  # 明确指定设备路径
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 
