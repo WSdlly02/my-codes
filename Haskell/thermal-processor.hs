@@ -41,5 +41,5 @@ main = do
                 putStrLn $ "时间戳: " ++ show ts
                 putStrLn $ "最高温度: " ++ show maxTemp ++ "°C"
                 putStrLn $ "所有温度: " ++ show tempArray
-                putStrLn $ "警告温度: 已省略" -- ++ warnTempArray
+                putStrLn $ "警告温度: " ++ show warnTempArray
                 putStrLn "--------------------------"
