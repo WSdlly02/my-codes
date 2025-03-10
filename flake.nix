@@ -62,6 +62,7 @@
               ];
             };
             python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
+            adafruit-circuitpython-mlx90640 = callPackage ./Nix/pkgs/adafruit-circuitpython-mlx90640.nix { };
             ####################
             inC =
               nixpkgs.lib.genAttrs
