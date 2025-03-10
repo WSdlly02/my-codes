@@ -38,6 +38,7 @@ python312.withPackages (
   [
     numpy
     pandas
+    psutil
     requests
     scikit-learn
     scipy

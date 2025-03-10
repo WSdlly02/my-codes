@@ -2,18 +2,18 @@
   description = "WSdlly02's Codes Library";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
       inputs.nixpkgs-lib.follows = "nixpkgs";
     };
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
   outputs =
     {
+      flake-parts,
       self,
       nixpkgs,
-      flake-parts,
     }@inputs:
     flake-parts.lib.mkFlake { inherit inputs; } {
       perSystem =
@@ -36,28 +36,27 @@
               packages = with pkgs; [
                 (self'.legacyPackages.python312Env.override {
                   extraPackages = with pkgs.python312Packages; [
-                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-mlx90640
                     self'.legacyPackages.mlx90460-driver.Adafruit-Blinka
-                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-typing
                     self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-busdevice
-                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-requests
                     self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-connectionmanager
+                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-mlx90640
+                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-requests
+                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-typing
                     self'.legacyPackages.mlx90460-driver.rpi-ws281x
                     ##
-                    typing-extensions
                     adafruit-platformdetect
                     adafruit-pureio
                     binho-host-adapter
-                    pyserial
                     pyftdi
+                    pyserial
                     pyusb
                     rpi-gpio
                     sysv-ipc
+                    typing-extensions
                     ##
                     flask
+                    icalendar # For generating calendar files
                     opencv4
-                    psutil
-                    icalendar # For generating calendar
                   ];
                 })
               ];
@@ -71,33 +70,27 @@
 
           legacyPackages = {
             ####################
-            python312Env = callPackage ./Nix/pkgs/python312Env.nix {
-              extraPackages = with pkgs.python312Packages; [
-                flask
-                rpi-gpio
-                psutil
-              ];
-            };
+            python312Env = callPackage ./Nix/pkgs/python312Env.nix { };
             python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
             mlx90460-driver =
               let
                 driverPath = "./Nix/pkgs/mlx90460-driver";
               in
               {
-                adafruit-circuitpython-mlx90640 =
-                  callPackage ./${driverPath}/adafruit-circuitpython-mlx90640.nix
-                    { };
                 Adafruit-Blinka = callPackage ./${driverPath}/Adafruit-Blinka.nix { };
-                adafruit-circuitpython-typing = callPackage ./${driverPath}/adafruit-circuitpython-typing.nix { };
                 adafruit-circuitpython-busdevice =
                   callPackage ./${driverPath}/adafruit-circuitpython-busdevice.nix
-                    { };
-                adafruit-circuitpython-requests =
-                  callPackage ./${driverPath}/adafruit-circuitpython-requests.nix
                     { };
                 adafruit-circuitpython-connectionmanager =
                   callPackage ./${driverPath}/adafruit-circuitpython-connectionmanager.nix
                     { };
+                adafruit-circuitpython-mlx90640 =
+                  callPackage ./${driverPath}/adafruit-circuitpython-mlx90640.nix
+                    { };
+                adafruit-circuitpython-requests =
+                  callPackage ./${driverPath}/adafruit-circuitpython-requests.nix
+                    { };
+                adafruit-circuitpython-typing = callPackage ./${driverPath}/adafruit-circuitpython-typing.nix { };
                 rpi-ws281x = callPackage ./${driverPath}/rpi-ws281x.nix { };
               };
             ####################
