@@ -35,29 +35,33 @@
             default = mkShell {
               packages = with pkgs; [
                 (self'.legacyPackages.python312Env.override {
-                  extraPackages = with pkgs.python312Packages; [
-                    self'.legacyPackages.mlx90460-driver.Adafruit-Blinka
-                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-busdevice
-                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-connectionmanager
-                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-mlx90640
-                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-requests
-                    self'.legacyPackages.mlx90460-driver.adafruit-circuitpython-typing
-                    self'.legacyPackages.mlx90460-driver.rpi-ws281x
-                    ##
-                    adafruit-platformdetect
-                    adafruit-pureio
-                    binho-host-adapter
-                    pyftdi
-                    pyserial
-                    pyusb
-                    rpi-gpio
-                    sysv-ipc
-                    typing-extensions
-                    ##
-                    flask
-                    icalendar # For generating calendar files
-                    opencv4
-                  ];
+                  extraPackages =
+                    with pkgs.python312Packages;
+                    with self'.legacyPackages.mlx90460-driver;
+                    [
+                      # Drivers from self
+                      Adafruit-Blinka
+                      adafruit-circuitpython-busdevice
+                      adafruit-circuitpython-connectionmanager
+                      adafruit-circuitpython-mlx90640
+                      adafruit-circuitpython-requests
+                      adafruit-circuitpython-typing
+                      rpi-ws281x
+                      # Drivers from Nixpkgs
+                      adafruit-platformdetect
+                      adafruit-pureio
+                      binho-host-adapter
+                      pyftdi
+                      pyserial
+                      pyusb
+                      rpi-gpio
+                      sysv-ipc
+                      typing-extensions
+                      # Daily runtimes
+                      flask
+                      icalendar # For generating calendar files
+                      opencv4
+                    ];
                 })
               ];
               shellHook = ''
