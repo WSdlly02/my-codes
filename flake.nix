@@ -34,39 +34,40 @@
           devShells = {
             default = mkShell {
               packages = with pkgs; [
-                self'.legacyPackages.python312FHSEnv
-                # (self'.legacyPackages.python312Env.override {
-                #   extraPackages =
-                #     with pkgs.python312Packages;
-                #     with self'.legacyPackages.mlx90460-driver;
-                #     [
-                #       libcamera
-                #       #pkgs.libcamera
-                #       # Drivers from self
-                #       Adafruit-Blinka
-                #       adafruit-circuitpython-busdevice
-                #       adafruit-circuitpython-connectionmanager
-                #       adafruit-circuitpython-mlx90640
-                #       adafruit-circuitpython-requests
-                #       adafruit-circuitpython-typing
-                #       rpi-ws281x
-                #       self'.legacyPackages.picamera2
-                #       # Drivers from Nixpkgs
-                #       adafruit-platformdetect
-                #       adafruit-pureio
-                #       binho-host-adapter
-                #       pyftdi
-                #       pyserial
-                #       pyusb
-                #       rpi-gpio
-                #       sysv-ipc
-                #       typing-extensions
-                #       # Daily runtimes
-                #       flask
-                #       icalendar # For generating calendar files
-                #       opencv4
-                #     ];
-                # })
+                libcamera
+                (self'.legacyPackages.python312Env.override {
+                  extraPackages =
+                    with pkgs.python312Packages;
+                    with self'.legacyPackages.mlx90460-driver;
+                    [
+                      libcamera
+                      # Drivers from self
+                      Adafruit-Blinka
+                      adafruit-circuitpython-busdevice
+                      adafruit-circuitpython-connectionmanager
+                      adafruit-circuitpython-mlx90640
+                      adafruit-circuitpython-requests
+                      adafruit-circuitpython-typing
+                      rpi-ws281x
+                      self'.legacyPackages.picamera2
+                      self'.legacyPackages.v4l2
+                      # Drivers from Nixpkgs
+                      adafruit-platformdetect
+                      adafruit-pureio
+                      binho-host-adapter
+                      pyftdi
+                      pyserial
+                      pyusb
+                      rpi-gpio
+                      sysv-ipc
+                      typing-extensions
+                      pillow
+                      # Daily runtimes
+                      flask
+                      icalendar # For generating calendar files
+                      opencv4
+                    ];
+                })
               ];
               shellHook = ''
                 fish
@@ -78,38 +79,11 @@
 
           legacyPackages = {
             ####################
-            python312Env = callPackage ./Nix/pkgs/python312Env.nix {
-              extraPackages =
-                with pkgs.python312Packages;
-                with self'.legacyPackages.mlx90460-driver;
-                [
-                  # Drivers from self
-                  Adafruit-Blinka
-                  adafruit-circuitpython-busdevice
-                  adafruit-circuitpython-connectionmanager
-                  adafruit-circuitpython-mlx90640
-                  adafruit-circuitpython-requests
-                  adafruit-circuitpython-typing
-                  rpi-ws281x
-                  self'.legacyPackages.picamera2
-                  # Drivers from Nixpkgs
-                  adafruit-platformdetect
-                  adafruit-pureio
-                  binho-host-adapter
-                  pyftdi
-                  pyserial
-                  pyusb
-                  rpi-gpio
-                  sysv-ipc
-                  typing-extensions
-                  # Daily runtimes
-                  flask
-                  icalendar # For generating calendar files
-                  opencv4
-                ];
-            };
+            python312Env = callPackage ./Nix/pkgs/python312Env.nix { };
             python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
             picamera2 = callPackage ./Nix/pkgs/picamera2.nix { };
+            v4l2 = callPackage ./Nix/pkgs/v4l2.nix { };
+            libcamera = callPackage ./Nix/pkgs/libcamera.nix { };
             mlx90460-driver =
               let
                 driverPath = "./Nix/pkgs/mlx90460-driver";

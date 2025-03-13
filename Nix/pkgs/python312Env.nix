@@ -30,21 +30,26 @@
 */
 {
   extraPackages ? [ ],
-  python312,
+  python311,
+  python3Packages,
+  libcamera,
 }:
-python312.withPackages (
-  ps:
-  with ps;
-  [
-    numpy
-    pandas
-    psutil
-    requests
-    scikit-learn
-    scipy
-    scrapy
-    sympy
-    virtualenv
-  ]
-  ++ extraPackages
-)
+python311.buildEnv.override {
+  extraLibs =
+    with python3Packages;
+    [
+      numpy
+      pandas
+      psutil
+      requests
+      scikit-learn
+      scipy
+      scrapy
+      sympy
+      virtualenv
+    ]
+    ++ extraPackages;
+  postBuild = ''
+  ln -s ${libcamera}/lib/python3.11/site-packages/libcamera $out/lib/python3.11/site-packages/
+  '';
+}
