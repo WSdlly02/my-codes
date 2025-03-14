@@ -1,9 +1,9 @@
 {
   lib,
-  python3Packages,
+  python312Packages,
   fetchPypi,
 }:
-python3Packages.buildPythonPackage rec {
+python312Packages.buildPythonPackage rec {
   pname = "adafruit-circuitpython-requests";
   version = "4.1.10";
   format = "wheel";

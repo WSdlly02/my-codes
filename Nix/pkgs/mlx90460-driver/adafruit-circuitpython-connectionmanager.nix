@@ -1,9 +1,9 @@
 {
   lib,
-  python3Packages,
+  python312Packages,
   fetchPypi,
 }:
-python3Packages.buildPythonPackage rec {
+python312Packages.buildPythonPackage rec {
   pname = "adafruit-circuitpython-connectionmanager";
   version = "3.1.3";
   format = "wheel";

@@ -1,9 +1,9 @@
 {
   lib,
-  python3Packages,
+  python312Packages,
   fetchPypi,
 }:
-python3Packages.buildPythonPackage rec {
+python312Packages.buildPythonPackage rec {
   pname = "rpi-ws281x";
   version = "5.0.0";
   src = fetchPypi rec {

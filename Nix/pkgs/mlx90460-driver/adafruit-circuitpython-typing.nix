@@ -1,9 +1,9 @@
 {
   lib,
-  python3Packages,
+  python312Packages,
   fetchPypi,
 }:
-python3Packages.buildPythonPackage rec {
+python312Packages.buildPythonPackage rec {
   pname = "adafruit-circuitpython-typing";
   version = "1.11.2";
   format = "wheel";

@@ -193,10 +193,10 @@
 
 {
   lib,
-  python3Packages,
+  python312Packages,
   fetchPypi,
 }:
-python3Packages.buildPythonPackage rec {
+python312Packages.buildPythonPackage rec {
   pname = "adafruit-circuitpython-mlx90640";
   version = "1.3.4";
   format = "wheel";

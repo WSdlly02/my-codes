@@ -30,13 +30,14 @@
 */
 {
   extraPackages ? [ ],
-  python311,
-  python3Packages,
   libcamera,
+  python312,
+  python312Packages,
+  system,
 }:
-python311.buildEnv.override {
+python312.buildEnv.override {
   extraLibs =
-    with python3Packages;
+    with python312Packages;
     [
       numpy
       pandas
@@ -50,6 +51,6 @@ python311.buildEnv.override {
     ]
     ++ extraPackages;
   postBuild = ''
-  ln -s ${libcamera}/lib/python3.11/site-packages/libcamera $out/lib/python3.11/site-packages/
+    ln -s ${libcamera}/lib/python3.12/site-packages/libcamera $out/lib/python3.12/site-packages/
   '';
 }

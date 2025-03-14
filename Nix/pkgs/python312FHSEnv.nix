@@ -5,7 +5,6 @@
   glibc,
   dbus,
   fish,
-  libcamera,
   libdrm,
   ninja,
   ncurses,
@@ -45,7 +44,6 @@ buildFHSEnv {
       dbus
       fish
       libdrm
-      libcamera
       ninja
       ncurses
       inputs.self.legacyPackages."${system}".python312Env
