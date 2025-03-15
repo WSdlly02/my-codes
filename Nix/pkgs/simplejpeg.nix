@@ -4,15 +4,17 @@
   fetchPypi,
 }:
 python312Packages.buildPythonPackage rec {
-  pname = "v4l2";
-  version = "0.2";
-  # format = "wheel";
+  pname = "simplejpeg";
+  version = "1.8.2";
+  format = "wheel";
   src = fetchPypi rec {
-    pname = "v4l2";
-    inherit version;
-    # dist = python;
-    # python = "py3";
-    hash = "sha256-DY8x+dVU3tTQtQoxp75VkLhh354bolbudX4cCRdd1KI=";
+    pname = "simplejpeg";
+    inherit version format;
+    dist = python;
+    python = "cp312";
+    abi = "cp312";
+    platform = "manylinux_2_17_aarch64.manylinux2014_aarch64";
+    hash = "sha256-cOo7qZMOqZH6KkZO/c3Zydt+f3F5SfTSkah737/JZqU=";
   };
 
   meta = with lib; {

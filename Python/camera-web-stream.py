@@ -1,70 +1,84 @@
-from flask import Flask, render_template, Response, request
-import subprocess
-import os
+# thermal_web_stream.py
+from picamera2 import Picamera2
+from flask import Flask, Response
+import cv2
+import threading
 import time
 
+# 初始化 Flask
 app = Flask(__name__)
 
-# 模拟警报状态
-alarm_status = False
+# 摄像头配置
+picam2 = Picamera2()
+config = picam2.create_preview_configuration(
+    main={"size": (640, 480), "format": "RGB888"}
+)
+picam2.configure(config)
+picam2.start()
+
+# 全局帧缓存和锁
+frame_lock = threading.Lock()
+latest_frame = None
 
 
-# 实时视频流生成器
-def generate_frames():
-    from picamera import PiCamera
-
-    camera = PiCamera()
-    camera.resolution = (640, 480)
-    camera.framerate = 24
-    time.sleep(2)  # 让摄像头预热
-
+def capture_frames():
+    """持续捕获摄像头帧"""
+    global latest_frame
     while True:
-        frame = camera.capture("static/frame.jpg", use_video_port=True)
-        with open("static/frame.jpg", "rb") as f:
-            frame = f.read()
-        yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
+        with frame_lock:
+            # 从摄像头获取帧并转换为 OpenCV 格式
+            frame = picam2.capture_array()
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            _, jpeg = cv2.imencode(".jpg", frame)
+            latest_frame = jpeg.tobytes()
+        time.sleep(0.03)  # 约 30 FPS
 
 
-# 主页路由
-@app.route("/")
-def index():
-    return render_template("index.html")
+def generate_stream():
+    """生成 MJPEG 流"""
+    while True:
+        if latest_frame:
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + latest_frame + b"\r\n\r\n"
+            )
 
 
-# 视频流路由
 @app.route("/video_feed")
 def video_feed():
+    """视频流路由"""
     return Response(
-        generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame"
+        generate_stream(), mimetype="multipart/x-mixed-replace; boundary=frame"
     )
 
 
-# 重启树莓派路由
-@app.route("/reboot", methods=["POST"])
-def reboot():
-    subprocess.call(["sudo", "reboot"])
-    return "Rebooting..."
-
-
-# 查看系统信息路由
-@app.route("/system_info")
-def system_info():
-    info = subprocess.check_output(["uname", "-a"]).decode("utf-8")
-    return info
-
-
-# 控制警报路由
-@app.route("/alarm", methods=["POST"])
-def alarm():
-    global alarm_status
-    alarm_status = not alarm_status
-    if alarm_status:
-        # 这里可以添加触发警报的代码，例如播放声音或发送通知
-        return "Alarm ON"
-    else:
-        # 这里可以添加关闭警报的代码
-        return "Alarm OFF"
+@app.route("/")
+def index():
+    """显示监控页面"""
+    return """
+    <html>
+      <head>
+        <title>树莓派摄像头实时监控</title>
+        <style>
+          body { margin: 0; background: #000; }
+          img { 
+            width: 100vw; 
+            height: 100vh;
+            object-fit: contain;
+          }
+        </style>
+      </head>
+      <body>
+        <img src="/video_feed">
+      </body>
+    </html>
+    """
 
 
 if __name__ == "__main__":
+    # 启动摄像头捕获线程
+    capture_thread = threading.Thread(target=capture_frames, daemon=True)
+    capture_thread.start()
+
+    # 启动 Web 服务器
     app.run(host="0.0.0.0", port=5000, threaded=True)

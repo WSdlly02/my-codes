@@ -34,10 +34,18 @@
           devShells = {
             default = mkShell {
               packages = with pkgs; [
+                libcamera
                 (haskellPackages.ghcWithPackages (
                   pkgs: with pkgs; [
+                    # Package manager
                     cabal-install
                     stack
+                    # Libs
+                    ##JuicyPixels
+                    http-types
+                    warp
+                    ##mime-types
+                    ##websockets
                   ]
                 ))
                 (self'.legacyPackages.python312Env.override {
@@ -54,11 +62,16 @@
                       mlx90460-driver.adafruit-circuitpython-typing
                       mlx90460-driver.rpi-ws281x
                       picamera2
-                      v4l2
+                      pidng
+                      simplejpeg
+                      v4l2-python3
                       # Drivers from Nixpkgs
                       adafruit-platformdetect
                       adafruit-pureio
+                      av
                       binho-host-adapter
+                      piexif
+                      python-prctl
                       pyftdi
                       pyserial
                       pyusb
@@ -69,7 +82,7 @@
                       # Daily runtimes
                       flask
                       icalendar # For generating calendar files
-                      ##opencv4
+                      opencv4
                     ];
                 })
               ];
@@ -83,10 +96,14 @@
 
           legacyPackages = {
             ####################
-            python312Env = callPackage ./Nix/pkgs/python312Env.nix { };
+            python312Env = callPackage ./Nix/pkgs/python312Env.nix { inherit inputs; };
             python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
             picamera2 = callPackage ./Nix/pkgs/picamera2.nix { };
-            v4l2 = callPackage ./Nix/pkgs/v4l2.nix { };
+            pidng = callPackage ./Nix/pkgs/pidng.nix { };
+            simplejpeg = callPackage ./Nix/pkgs/simplejpeg.nix { };
+            rpi-kms = callPackage ./Nix/pkgs/rpi-kms.nix { inherit inputs; };
+            v4l2-python3 = callPackage ./Nix/pkgs/v4l2-python3.nix { };
+            kmsxx-src = callPackage ./Nix/pkgs/kmsxx-src.nix { };
             mlx90460-driver =
               let
                 driverPath = "./Nix/pkgs/mlx90460-driver";

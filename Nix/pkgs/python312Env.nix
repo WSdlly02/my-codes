@@ -31,6 +31,7 @@
 {
   extraPackages ? [ ],
   libcamera,
+  inputs,
   python312,
   python312Packages,
   system,
@@ -52,5 +53,17 @@ python312.buildEnv.override {
     ++ extraPackages;
   postBuild = ''
     ln -s ${libcamera}/lib/python3.12/site-packages/libcamera $out/lib/python3.12/site-packages/
+    ln -s ${libcamera}/lib/gstreamer-1.0 $out/lib/
+    ln -s ${libcamera}/lib/libcamera $out/lib/
+    ln -s ${libcamera}/lib/libcamera-base.so $out/lib/
+    ln -s ${libcamera}/lib/libcamera-base.so.0.4 $out/lib/
+    ln -s ${libcamera}/lib/libcamera-base.so.0.4.0 $out/lib/
+    ln -s ${libcamera}/lib/libcamera.so $out/lib/
+    ln -s ${libcamera}/lib/libcamera.so.0.4 $out/lib/
+    ln -s ${libcamera}/lib/libcamera.so.0.4.0 $out/lib/
+    ln -s ${libcamera}/share/libcamera $out/share/
+    ln -s ${
+      inputs.self.legacyPackages."${system}".rpi-kms
+    }/lib/python3.12/site-packages/pykms $out/lib/python3.12/site-packages/
   '';
 }
