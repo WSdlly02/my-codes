@@ -1,12 +1,12 @@
 {
-  stdenv,
+  cmake,
   fetchFromGitHub,
   lib,
   meson,
-  pkg-config,
-  cmake,
-  nlohmann_json,
   ninja,
+  nlohmann_json,
+  pkg-config,
+  stdenv,
 }:
 
 stdenv.mkDerivation rec {

@@ -1,26 +1,25 @@
 {
-  stdenv,
+  doxygen,
   fetchFromGitHub,
+  graphviz,
+  gst_all_1,
+  gtest,
+  inputs,
   lib,
-  meson,
-  ninja,
-  pkg-config,
-  makeFontsConf,
-  openssl,
   libdrm,
   libevent,
   libyaml,
   lttng-ust,
-  inputs,
-  system,
-  gst_all_1,
-  gtest,
-  graphviz,
-  doxygen,
+  makeFontsConf,
+  meson,
+  ninja,
+  openssl,
+  pkg-config,
   python312,
   python312Packages,
+  stdenv,
+  system,
   systemd, # for libudev
-  withQcam ? false,
 }:
 
 stdenv.mkDerivation rec {
@@ -63,31 +62,30 @@ stdenv.mkDerivation rec {
 
   strictDeps = true;
 
-  buildInputs =
-    [
-      # IPA and signing
-      openssl
+  buildInputs = [
+    # IPA and signing
+    openssl
 
-      # gstreamer integration
-      gst_all_1.gstreamer
-      gst_all_1.gst-plugins-base
+    # gstreamer integration
+    gst_all_1.gstreamer
+    gst_all_1.gst-plugins-base
 
-      # cam integration
-      libevent
-      libdrm
+    # cam integration
+    libevent
+    libdrm
 
-      # hotplugging
-      systemd
+    # hotplugging
+    systemd
 
-      # lttng tracing
-      lttng-ust
+    # lttng tracing
+    lttng-ust
 
-      # yamlparser
-      libyaml
+    # yamlparser
+    libyaml
 
-      gtest
-      inputs.self.legacyPackages."${system}".libpisp
-    ];
+    gtest
+    inputs.self.legacyPackages."${system}".libpisp
+  ];
 
   nativeBuildInputs = [
     meson

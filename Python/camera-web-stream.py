@@ -12,6 +12,7 @@ app = Flask(__name__)
 picam2 = Picamera2()
 config = picam2.create_video_configuration(
     main={"size": (2592, 1944)},  # 原生分辨率
+    lores={"size": (2592, 1944)},  # 预览流
     display="main",
     encode="main",
     controls={"FrameRate": 30},
@@ -95,4 +96,5 @@ if __name__ == "__main__":
     capture_thread = threading.Thread(target=capture_frames, daemon=True)
     capture_thread.start()
 
+    # 启动 Web 服务器
     app.run(host="0.0.0.0", port=5000, threaded=True)
