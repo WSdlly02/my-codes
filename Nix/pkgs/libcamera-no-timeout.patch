@@ -1,0 +1,18 @@
+diff --git a/src/libcamera/ipc_pipe_unixsocket.cpp b/src/libcamera/ipc_pipe_unixsocket.cpp
+index 668ec73b..f845ec96 100644
+--- a/src/libcamera/ipc_pipe_unixsocket.cpp
++++ b/src/libcamera/ipc_pipe_unixsocket.cpp
+@@ -130,11 +130,13 @@ int IPCPipeUnixSocket::call(const IPCUnixSocket::Payload &message,
+ 	/* \todo Make this less dangerous, see IPCPipe::sendSync() */
+ 	timeout.start(2000ms);
+ 	while (!iter->second.done) {
++#if 0
+ 		if (!timeout.isRunning()) {
+ 			LOG(IPCPipe, Error) << "Call timeout!";
+ 			callData_.erase(iter);
+ 			return -ETIMEDOUT;
+ 		}
++#endif
+ 
+ 		Thread::current()->eventDispatcher()->processEvents();
+ 	}

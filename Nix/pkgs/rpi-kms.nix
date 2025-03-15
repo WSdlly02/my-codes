@@ -26,7 +26,6 @@ stdenv.mkDerivation rec {
     sed -i 's|\bgit\b|git -c safe.directory="${
       inputs.self.legacyPackages."${system}".kmsxx-src
     }/.git"|g' clone-kmsxx.sh
-
     cat >>meson_options.txt<< EOF
     option('libutils', type : 'boolean', value : true,
         description : 'Build kms++utils library')
@@ -37,7 +36,6 @@ stdenv.mkDerivation rec {
     option('kmscube', type : 'boolean', value : false,
         description : 'Build kmscube test application')
     EOF
-    cat meson_options.txt
   '';
   mesonFlags = [
     "-Drepository=${inputs.self.legacyPackages."${system}".kmsxx-src}"

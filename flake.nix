@@ -34,7 +34,6 @@
           devShells = {
             default = mkShell {
               packages = with pkgs; [
-                libcamera
                 (haskellPackages.ghcWithPackages (
                   pkgs: with pkgs; [
                     # Package manager
@@ -71,14 +70,14 @@
                       av
                       binho-host-adapter
                       piexif
-                      python-prctl
+                      pillow
                       pyftdi
                       pyserial
+                      python-prctl
                       pyusb
                       rpi-gpio
                       sysv-ipc
                       typing-extensions
-                      pillow
                       # Daily runtimes
                       flask
                       icalendar # For generating calendar files
@@ -96,14 +95,16 @@
 
           legacyPackages = {
             ####################
-            python312Env = callPackage ./Nix/pkgs/python312Env.nix { inherit inputs; };
-            python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
+            kmsxx-src = callPackage ./Nix/pkgs/kmsxx-src.nix { };
+            libcamera = callPackage ./Nix/pkgs/libcamera-raspi.nix { inherit inputs; };
+            libpisp = callPackage ./Nix/pkgs/libpisp.nix { };
             picamera2 = callPackage ./Nix/pkgs/picamera2.nix { };
             pidng = callPackage ./Nix/pkgs/pidng.nix { };
-            simplejpeg = callPackage ./Nix/pkgs/simplejpeg.nix { };
+            python312Env = callPackage ./Nix/pkgs/python312Env.nix { inherit inputs; };
+            python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { inherit inputs; }; # depends on python312Env
             rpi-kms = callPackage ./Nix/pkgs/rpi-kms.nix { inherit inputs; };
+            simplejpeg = callPackage ./Nix/pkgs/simplejpeg.nix { };
             v4l2-python3 = callPackage ./Nix/pkgs/v4l2-python3.nix { };
-            kmsxx-src = callPackage ./Nix/pkgs/kmsxx-src.nix { };
             mlx90460-driver =
               let
                 driverPath = "./Nix/pkgs/mlx90460-driver";
