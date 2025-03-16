@@ -1,80 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>服务器管理面板</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>热成像监考系统</title>
 </head>
 <body>
-    <div class="container">
-        <h1>服务器管理面板</h1>
-        
-        <!-- 服务器信息展示 -->
-        <div class="card">
-            <h2>实时状态</h2>
-            <div id="serverInfo">
-                <p>加载中...</p>
-            </div>
-            <button onclick="refreshInfo()">刷新信息</button>
-        </div>
-
-        <!-- 重启操作 -->
-        <div class="card">
-            <h2>操作</h2>
-            <button onclick="confirmReboot()" class="danger">重启服务器</button>
-        </div>
-    </div>
-
-    <script>
-        // 获取服务器信息
-        function refreshInfo() {
-            fetch('/api/server-info')
-                .then(response => response.json())
-                .then(data => {
-                    const infoDiv = document.getElementById('serverInfo');
-                    infoDiv.innerHTML = `
-                        <h3>CPU</h3>
-                        <p>使用率: ${data.cpu.percent}%</p>
-                        <p>物理核心: ${data.cpu.cores}</p>
-
-                        <h3>内存</h3>
-                        <p>总内存: ${data.memory.total} GB</p>
-                        <p>已使用: ${data.memory.used} GB (${data.memory.percent}%)</p>
-
-                        <h3>磁盘</h3>
-                        <p>总空间: ${data.disk.total} GB</p>
-                        <p>已使用: ${data.disk.used} GB (${data.disk.percent}%)</p>
-
-                        <h3>网络</h3>
-                        <p>上传: ${data.network.sent} MB</p>
-                        <p>下载: ${data.network.recv} MB</p>
-                    `;
-                });
-        }
-
-        // 确认重启操作
-        function confirmReboot() {
-            if (confirm('确定要重启服务器吗？此操作不可逆！')) {
-                const token = prompt('请输入安全令牌:');
-                fetch('/api/reboot', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-API-TOKEN': token || ''
-                    }
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        alert('重启命令已发送！');
-                    } else {
-                        alert(`操作失败: ${data.message}`);
-                    }
-                });
-            }
-        }
-
-        // 初始加载
-        refreshInfo();
-    </script>
+    <h1>热成像监考系统</h1>
+    <img src="/video_feed">
 </body>
 </html>

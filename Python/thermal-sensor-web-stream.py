@@ -14,7 +14,7 @@ mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_8_HZ
 
 # 全局变量
 frame = [0] * 768
-lock = Lock()
+thermal_lock = Lock()
 app = Flask(__name__)
 
 # 颜色映射配置
@@ -28,7 +28,7 @@ def capture_thread():
     global frame
     while True:
         try:
-            with lock:
+            with thermal_lock:
                 mlx.getFrame(frame)
         except ValueError:
             continue  # 忽略偶发的I2C错误
@@ -37,7 +37,7 @@ def capture_thread():
 
 def process_frame():
     """处理温度数据生成彩色图像"""
-    with lock:
+    with thermal_lock:
         # 转换为numpy数组
         data = np.array(frame).reshape((24, 32)).astype(np.float32)
 
