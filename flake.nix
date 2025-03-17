@@ -32,69 +32,14 @@
         in
         {
           devShells = {
-            default = mkShell {
-              packages = with pkgs; [
-                (haskellPackages.ghcWithPackages (
-                  pkgs: with pkgs; [
-                    # Package manager
-                    cabal-install
-                    stack
-                    # Libs
-                    ##JuicyPixels
-                    http-types
-                    warp
-                    ##mime-types
-                    ##websockets
-                  ]
-                ))
-                (self'.legacyPackages.python312Env.override {
-                  extraPackages =
-                    with pkgs.python312Packages;
-                    with self'.legacyPackages;
-                    [
-                      # Drivers from self
-                      mlx90460-driver.Adafruit-Blinka
-                      mlx90460-driver.adafruit-circuitpython-busdevice
-                      mlx90460-driver.adafruit-circuitpython-connectionmanager
-                      mlx90460-driver.adafruit-circuitpython-mlx90640
-                      mlx90460-driver.adafruit-circuitpython-requests
-                      mlx90460-driver.adafruit-circuitpython-typing
-                      mlx90460-driver.rpi-ws281x
-                      picamera2
-                      pidng
-                      simplejpeg
-                      v4l2-python3
-                      # Drivers from Nixpkgs
-                      adafruit-platformdetect
-                      adafruit-pureio
-                      av
-                      binho-host-adapter
-                      piexif
-                      pillow
-                      pyftdi
-                      pyserial
-                      python-prctl
-                      pyusb
-                      rpi-gpio
-                      sysv-ipc
-                      typing-extensions
-                      # Daily runtimes
-                      flask
-                      icalendar # For generating calendar files
-                      opencv4
-                    ];
-                })
-              ];
-              shellHook = ''
-                fish
-              '';
-            };
+            default = callPackage ./Nix/devShells-default.nix { inherit inputs; };
           };
 
           formatter = pkgs.nixfmt-rfc-style;
 
           legacyPackages = {
             ####################
+            haskellEnv = callPackage ./Nix/pkgs/haskellEnv.nix { };
             kmsxx-src = callPackage ./Nix/pkgs/kmsxx-src.nix { };
             libcamera = callPackage ./Nix/pkgs/libcamera-raspi.nix { inherit inputs; };
             libpisp = callPackage ./Nix/pkgs/libpisp.nix { };

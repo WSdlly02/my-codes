@@ -23,17 +23,17 @@
 
   is equals to
 
-  python3.withPackages (ps: with ps; [
+  python3.withPackages (python312Packages: with python312Packages; [ # It will pass python312Packages as this func's arg
     numpy
     requests
   ])
 */
 {
   extraPackages ? [ ],
+  extraPostBuild ? "",
   inputs,
   python312,
   python312Packages,
-  system,
 }:
 python312.buildEnv.override {
   extraLibs =
@@ -50,24 +50,5 @@ python312.buildEnv.override {
       virtualenv
     ]
     ++ extraPackages;
-  postBuild = ''
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/bin/cam $out/bin/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/bin/libcamerify $out/bin/
-    ln -s ${
-      inputs.self.legacyPackages."${system}".libcamera
-    }/lib/python3.12/site-packages/libcamera $out/lib/python3.12/site-packages/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/lib/gstreamer-1.0 $out/lib/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/lib/libcamera $out/lib/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/lib/libcamera-base.so $out/lib/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/lib/libcamera-base.so.0.3 $out/lib/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/lib/libcamera-base.so.0.3.1 $out/lib/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/lib/libcamera.so $out/lib/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/lib/libcamera.so.0.3 $out/lib/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/lib/libcamera.so.0.3.1 $out/lib/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/libexec $out/
-    ln -s ${inputs.self.legacyPackages."${system}".libcamera}/share/libcamera $out/share/
-    ln -s ${
-      inputs.self.legacyPackages."${system}".rpi-kms
-    }/lib/python3.12/site-packages/pykms $out/lib/python3.12/site-packages/
-  '';
+  postBuild = "" + extraPostBuild;
 }
