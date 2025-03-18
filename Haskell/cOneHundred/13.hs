@@ -2,11 +2,11 @@ import Data.Time.Clock
 
 main :: IO ()
 main = do
-  start <- getCurrentTime
-  let result = 水仙花数
-  end <- getCurrentTime
-  print result
-  putStrLn $ "耗时: " ++ show (diffUTCTime end start)
+    start <- getCurrentTime
+    let result = 水仙花数
+    end <- getCurrentTime
+    print result
+    putStrLn $ "耗时: " ++ show (diffUTCTime end start)
 
 水仙花数 = 水仙花数 [0 .. 9] [0 .. 9] [0 .. 9]
   where
