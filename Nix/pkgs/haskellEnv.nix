@@ -9,6 +9,7 @@ haskellPackages.ghcWithPackages (
     # Package manager
     cabal-install
     stack
+    ormolu # Formatter
   ]
   ++ extraPackages
 )

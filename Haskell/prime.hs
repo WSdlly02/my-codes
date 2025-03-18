@@ -1,6 +1,7 @@
-primes = filterPrime [2..] where
-  filterPrime (p:xs) =
-    p : filterPrime [x | x <- xs, x `mod` p /= 0]
+primes = filterPrime [2 ..]
+  where
+    filterPrime (p : xs) =
+      p : filterPrime [x | x <- xs, x `mod` p /= 0]
 
 {-
 1.primes = filterPrime [2,3,4,5,6,7,8,...]

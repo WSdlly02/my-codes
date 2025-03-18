@@ -1,18 +1,19 @@
-import System.IO
 import System.Exit (exitFailure)
+import System.IO
 import Text.Read (readMaybe)
 
-numFigures x = step x 0 where
-  step x n = if x `mod` (map (\x -> 10^x) [0..] !! n) == x
-    then n
-    else step x (n+1)
+numFigures x = step x 0
+  where
+    step x n =
+      if x `mod` (map (\x -> 10 ^ x) [0 ..] !! n) == x
+        then n
+        else step x (n + 1)
 
 main :: IO ()
 main = do
   -- 交互提示部分
   putStr "请输入一个整数:\n"
-  hFlush stdout  -- 确保提示立即显示
-  
+  hFlush stdout -- 确保提示立即显示
   input <- getLine
   case readMaybe input of
     Just n -> do

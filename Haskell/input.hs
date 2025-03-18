@@ -1,13 +1,13 @@
-import System.IO
 import System.Exit (exitFailure)
+import System.IO
 import Text.Read (readMaybe)
 
 main :: IO ()
 main = do
   -- 交互提示部分
   putStr "请输入一个数字（支持整数/小数）: "
-  hFlush stdout  -- 确保提示立即显示
-  
+  hFlush stdout -- 确保提示立即显示
+
   -- 带异常处理的输入
   input <- getLine
   case readMaybe input of

@@ -28,7 +28,7 @@ SCALE_FACTOR = 10  # 图像放大倍数 (32x24 -> 320x240)
 picam2 = Picamera2()
 config = picam2.create_video_configuration(
     main={"size": (2592, 1944)},  # 原生分辨率
-    lores={"size": (2592, 1944)},  # 预览流
+    lores={"size": (1296, 972)},  # 预览流
     display="main",
     encode="main",
     controls={"FrameRate": 30},
@@ -122,8 +122,8 @@ def process_thermal_data():
         data = np.array(frame).reshape((24, 32)).astype(np.float32)
 
         # 归一化到0-255
-        min_temp = np.min(data)
-        max_temp = np.max(data)
+        min_temp = 10
+        max_temp = 60
         norm = ((data - min_temp) / (max_temp - min_temp) * 255).astype(np.uint8)
 
         # 应用颜色映射
@@ -153,7 +153,7 @@ def process_thermal_data():
             (255, 255, 255),
             2,
         )
-        if max_temp > 50:  # 高温报警阈值
+        if np.max(data) > 50:  # 高温报警阈值
             cv2.putText(
                 scaled,
                 "HIGH TEMP ALERT!",
