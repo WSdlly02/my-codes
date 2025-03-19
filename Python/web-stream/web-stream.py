@@ -123,7 +123,7 @@ def process_thermal_data():
 
         # 归一化到0-255
         min_temp = 10
-        max_temp = 60
+        max_temp = 40
         norm = ((data - min_temp) / (max_temp - min_temp) * 255).astype(np.uint8)
 
         # 应用颜色映射
