@@ -8,7 +8,7 @@ import adafruit_mlx90640
 # 初始化 MLX90640
 i2c = board.I2C()
 mlx = adafruit_mlx90640.MLX90640(i2c)
-mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_1_HZ  # 4Hz 刷新率
+mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_16_HZ  # 16Hz 刷新率
 frame = [0.0] * 768
 
 try:
@@ -27,6 +27,6 @@ try:
         sys.stdout.buffer.write(data_bytes)
         sys.stdout.buffer.flush()  # 强制刷新缓冲区
 
-        time.sleep(1)
+        time.sleep(1 / 16)
 except KeyboardInterrupt:
     print("程序终止")
