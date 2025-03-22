@@ -30,25 +30,24 @@
 */
 {
   extraPackages ? [ ],
-  extraPostBuild ? "",
   inputs,
   python312,
-  python312Packages,
+  system,
 }:
-python312.buildEnv.override {
-  extraLibs =
-    with python312Packages;
-    [
-      numpy
-      pandas
-      psutil
-      requests
-      scikit-learn
-      scipy
-      scrapy
-      sympy
-      virtualenv
-    ]
-    ++ extraPackages;
-  postBuild = "" + extraPostBuild;
-}
+python312.withPackages (
+  python312Packages: # just formal arguement
+  with python312Packages;
+  with inputs.self.legacyPackages."${system}";
+  [
+    numpy
+    pandas
+    psutil
+    requests
+    scikit-learn
+    scipy
+    scrapy
+    sympy
+    virtualenv
+  ]
+  ++ extraPackages
+)
