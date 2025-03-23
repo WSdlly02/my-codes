@@ -16,14 +16,15 @@
       nixpkgs,
     }@inputs:
     flake-parts.lib.mkFlake { inherit inputs; } {
+      flake.overlays = { };
       perSystem =
         {
-          inputs',
           self',
+          system,
           ...
         }:
         let
-          pkgs = inputs'.nixpkgs.legacyPackages; # can be defined in arguments
+          pkgs = import nixpkgs { inherit system; };
           inherit (pkgs)
             callPackage
             mkShell
