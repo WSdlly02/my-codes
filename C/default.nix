@@ -15,8 +15,6 @@ stdenv.mkDerivation {
   dontUnpack = true;
   preferLocalBuild = true;
   allowSubstitutes = false;
-  buildInputs = [
-  ];
   buildPhase = ''
     $CC $src -Wall -Werror -std=c17 -o ${pname}
   '';

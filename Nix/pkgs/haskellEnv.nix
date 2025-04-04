@@ -8,6 +8,7 @@ haskellPackages.ghcWithPackages (
   [
     cabal-install
     fourmolu # Formatter
+    haskell-language-server
     stack
   ]
   ++ extraPackages
