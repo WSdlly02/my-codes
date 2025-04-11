@@ -7,4 +7,4 @@ main = do
     hFlush stdout -- 确保提示立即显示
     input <- getLine
     let output = reverse input
-    putStrLn $ show output
+    print output

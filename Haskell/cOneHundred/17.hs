@@ -1,4 +1,4 @@
-import System.IO
+import System.IO (hFlush, stdout)
 
 main :: IO ()
 main = do

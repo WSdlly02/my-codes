@@ -1,11 +1,12 @@
 import System.Exit (exitFailure)
-import System.IO
+import System.IO (hFlush, stdout)
 import Text.Read (readMaybe)
 
+numFigures :: (Integral t) => t -> Int
 numFigures x = step x 0
   where
     step x n =
-        if x `mod` (map (\x -> 10 ^ x) [0 ..] !! n) == x
+        if x `mod` (map (10 ^) [0 ..] !! n) == x
             then n
             else step x (n + 1)
 

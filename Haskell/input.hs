@@ -1,5 +1,5 @@
 import System.Exit (exitFailure)
-import System.IO
+import System.IO (hFlush, stdout)
 import Text.Read (readMaybe)
 
 main :: IO ()

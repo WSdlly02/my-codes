@@ -4,7 +4,7 @@
         else putStrLn $ "最大公约数:" ++ show (maxNum n m) ++ " 最小公倍数:" ++ show (minNum n m)
   where
     maxNum x y =
-        if (x `mod` y == 0)
+        if x `mod` y == 0
             then y
             else maxNum y (x `mod` y)
-    minNum x y = x * y `div` (maxNum x y)
+    minNum x y = x * y `div` maxNum x y
