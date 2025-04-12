@@ -4,6 +4,9 @@ primes = filterPrime [2 ..]
   filterPrime (p : xs) =
     p : filterPrime [x | x <- xs, x `mod` p /= 0]
 
+main :: IO ()
+main = print primes
+
 {-
 1.primes = filterPrime [2,3,4,5,6,7,8,...]
 --> 2 : filterPrime [3,5,7,9,...]  -- 筛除所有 2 的倍数（4,6,8...）

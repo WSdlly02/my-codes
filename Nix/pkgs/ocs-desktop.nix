@@ -15,8 +15,15 @@ let
       };
     }
     .${system};
-  appimageContents = appimageTools.extractType1 { inherit pname version src; };
+  appimageContents = appimageTools.extract { inherit pname version src; };
 in
 appimageTools.wrapType2 rec {
   inherit pname version src;
+
+  extraInstallCommands = ''
+    install -m 444 -D ${appimageContents}/ocs\ desktop.desktop -t $out/share/applications
+    substituteInPlace $out/share/applications/ocs\ desktop.desktop \
+      --replace 'Exec=AppRun --no-sandbox %U' 'Exec=${pname} --no-sandbox %U'
+    cp -r ${appimageContents}/usr/share/icons $out/share
+  '';
 }
