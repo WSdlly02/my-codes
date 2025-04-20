@@ -29,7 +29,7 @@
   ])
 */
 {
-  extraPackages ? [ ],
+  extraPackages ? [ ], # For devShells
   inputs,
   python312,
   system,
@@ -37,7 +37,7 @@
 python312.withPackages (
   python312Packages: # just formal arguement
   with python312Packages;
-  with inputs.self.legacyPackages."${system}";
+  with inputs.self.legacyPackages."${system}"; # For persistent buildInputs
   [
     numpy
     pandas

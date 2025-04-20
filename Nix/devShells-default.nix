@@ -1,14 +1,16 @@
 {
+  haskellEnv,
   haskellPackages,
   inputs,
   mkShell,
+  python312Env,
   python312Packages,
   system,
 }:
 
 mkShell {
   packages = [
-    (inputs.self.legacyPackages."${system}".haskellEnv.override {
+    (haskellEnv.override {
       extraPackages = with haskellPackages; [
         # Libs
         JuicyPixels
@@ -18,7 +20,7 @@ mkShell {
         websockets
       ];
     })
-    (inputs.self.legacyPackages."${system}".python312Env.override {
+    (python312Env.override {
       extraPackages =
         with python312Packages;
         with inputs.self.legacyPackages."${system}";
