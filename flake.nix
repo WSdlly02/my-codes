@@ -28,12 +28,12 @@
               rocmSupport = true;
             };
           })
-          self.overlays.legacyPackagesExposed
+          self.overlays.exposedPackages
         ];
     in
     {
       overlays = {
-        legacyPackagesExposed =
+        exposedPackages =
           final: prev: with prev; {
             haskellEnv = callPackage ./Nix/pkgs/haskellEnv.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
@@ -51,13 +51,10 @@
       formatter = forAllSystems (system: (pkgs system).nixfmt-rfc-style);
 
       legacyPackages = forAllSystems (
-        system: with (pkgs system); {
-          ####################
-          haskellEnv = callPackage ./Nix/pkgs/haskellEnv.nix { };
-          ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
-          python312Env = callPackage ./Nix/pkgs/python312Env.nix { inherit inputs; };
-          python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { }; # depends on python312Env
-          ####################
+        system:
+        with (pkgs system);
+        self.overlays.exposedPackages (pkgs system) (pkgs system)
+        // {
           inC =
             lib.genAttrs
               [

@@ -12,15 +12,16 @@
   rocmPackages,
   python312Env,
   stdenv,
+  symlinkJoin,
   system,
   udev,
   zlib,
   zstd,
 }:
 let
-  usedRocmPackages = lib.optionals config.rocmSupport (
-    with rocmPackages;
-    [
+  rocmtoolkit_joined = symlinkJoin {
+    name = "rocm-merged";
+    paths = with rocmPackages; [
       rocm-core
       clr
       rccl
@@ -46,11 +47,11 @@ let
       rocm-comgr
       rocm-device-libs
       rocm-runtime
-      rocm-smi
       clr.icd
       hipify
-    ]
-  );
+      rocm-smi
+    ];
+  };
 in
 buildFHSEnv {
   name = "python312FHSEnv";
@@ -72,7 +73,7 @@ buildFHSEnv {
       zlib
       zstd
     ]
-    ++ usedRocmPackages;
+    ++ lib.optionals config.rocmSupport [ rocmtoolkit_joined ];
   profile = "export LD_LIBRARY_PATH=/usr/lib";
   runScript = "fish";
 }
