@@ -12,48 +12,28 @@
     }@inputs:
     let
       inherit (nixpkgs) lib;
+      inherit (self) mkPkgs;
       systems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
-      forAllSystems = lib.genAttrs systems;
-      pkgs =
-        system:
-        nixpkgs.legacyPackages."${system}".appendOverlays [
-          (final: prev: {
-            config = prev.config // {
-              allowUnfree = true;
-              allowUnsupportedSystem = true;
-              enableParallelBuilding = true;
-              rocmSupport = true;
-            };
-          })
-          self.overlays.exposedPackages
-        ];
+      forExposedSystems = lib.genAttrs systems;
     in
     {
-      overlays = {
-        exposedPackages =
-          final: prev: with prev; {
-            haskellEnv = callPackage ./Nix/pkgs/haskellEnv.nix { };
-            ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
-            python312Env = callPackage ./Nix/pkgs/python312Env.nix { inherit inputs; };
-            python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { };
-          };
-      };
-
-      devShells = forAllSystems (
-        system: with (pkgs system); {
+      devShells = forExposedSystems (
+        system: with (mkPkgs { inherit system; }); {
           default = callPackage ./Nix/devShells-default.nix { inherit inputs; };
         }
       );
 
-      formatter = forAllSystems (system: (pkgs system).nixfmt-rfc-style);
+      formatter = forExposedSystems (system: (mkPkgs { inherit system; }).nixfmt-rfc-style);
 
-      legacyPackages = forAllSystems (
+      legacyPackages = forExposedSystems (
         system:
-        with (pkgs system);
-        self.overlays.exposedPackages (pkgs system) (pkgs system)
+        with (mkPkgs { inherit system; });
+        self.overlays.exposedPackages null (mkPkgs {
+          inherit system;
+        })
         // {
           inC =
             lib.genAttrs
@@ -150,5 +130,33 @@
               );
         }
       );
+
+      mkPkgs =
+        {
+          config ? { },
+          overlays ? [ ],
+          system,
+        }:
+        import nixpkgs {
+          inherit system;
+          config = {
+            allowUnfree = true;
+            enableParallelBuilding = true;
+            rocmSupport = true; # Notice !!!
+          } // config;
+          overlays = [
+            self.overlays.exposedPackages
+          ] ++ overlays;
+        };
+
+      overlays = {
+        exposedPackages =
+          final: prev: with prev; {
+            haskellEnv = callPackage ./Nix/pkgs/haskellEnv.nix { };
+            ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
+            python312Env = callPackage ./Nix/pkgs/python312Env.nix { inherit inputs; };
+            python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { };
+          };
+      };
     };
 }
