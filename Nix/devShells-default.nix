@@ -5,7 +5,7 @@
   mkShell,
   python312Env,
   python312Packages,
-  system,
+  stdenv,
 }:
 
 mkShell {
@@ -23,7 +23,7 @@ mkShell {
     (python312Env.override {
       extraPackages =
         with python312Packages;
-        with inputs.self.legacyPackages."${system}";
+        with inputs.self.legacyPackages."${stdenv.hostPlatform.system}";
         [
           # Daily runtimes
           flask

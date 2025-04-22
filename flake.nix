@@ -140,9 +140,10 @@
         import nixpkgs {
           inherit system;
           config = {
+            allowAliases = false;
             allowUnfree = true;
-            enableParallelBuilding = true;
             rocmSupport = true; # Notice !!!
+            warnUndeclaredOptions = true;
           } // config;
           overlays = [
             self.overlays.exposedPackages

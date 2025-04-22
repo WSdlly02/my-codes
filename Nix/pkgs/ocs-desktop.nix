@@ -2,7 +2,7 @@
   lib,
   appimageTools,
   fetchurl,
-  system,
+  stdenv,
 }:
 let
   version = "2.6.24";
@@ -14,7 +14,7 @@ let
         hash = "sha256-bDeV3V6CgIGQx0iJgkxwnAK0ze2dIeJ22m6rD7BjTtI=";
       };
     }
-    .${system};
+    .${stdenv.hostPlatform.system};
   appimageContents = appimageTools.extract { inherit pname version src; };
 in
 appimageTools.wrapType2 rec {

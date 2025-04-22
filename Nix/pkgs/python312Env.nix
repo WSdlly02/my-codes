@@ -32,12 +32,12 @@
   extraPackages ? [ ], # For devShells
   inputs,
   python312,
-  system,
+  stdenv,
 }:
 python312.withPackages (
   python312Packages: # just formal arguement
   with python312Packages;
-  with inputs.self.legacyPackages."${system}"; # For persistent buildInputs
+  with inputs.self.legacyPackages."${stdenv.hostPlatform.system}"; # For persistent buildInputs
   [
     numpy
     pandas

@@ -13,7 +13,6 @@
   python312Env,
   stdenv,
   symlinkJoin,
-  system,
   udev,
   zlib,
   zstd,
