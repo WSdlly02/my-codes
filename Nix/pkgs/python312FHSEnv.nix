@@ -56,7 +56,6 @@ buildFHSEnv {
   name = "python312FHSEnv";
   targetPkgs =
     pkgs:
-    with pkgs;
     [
       # Common pkgs
       dbus

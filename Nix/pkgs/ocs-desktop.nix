@@ -1,5 +1,4 @@
 {
-  lib,
   appimageTools,
   fetchurl,
   stdenv,
