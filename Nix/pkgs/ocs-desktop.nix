@@ -4,13 +4,13 @@
   stdenv,
 }:
 let
-  version = "2.6.24";
+  version = "2.7.1";
   pname = "ocs-desktop";
   src =
     {
       x86_64-linux = fetchurl {
-        url = "https://github.com/ocsjs/${pname}/releases/download/2.6.24/ocs-${version}-setup-linux-x86_64.AppImage";
-        hash = "sha256-bDeV3V6CgIGQx0iJgkxwnAK0ze2dIeJ22m6rD7BjTtI=";
+        url = "https://github.com/ocsjs/${pname}/releases/download/${version}/ocs-${version}-setup-linux-x86_64.AppImage";
+        hash = "sha256-82zf4Cu+Qh1G1ZF7vUhT4oks9njRaC7KWK+ZNSkrUU4=";
       };
     }
     .${stdenv.hostPlatform.system};
