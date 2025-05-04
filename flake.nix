@@ -154,6 +154,7 @@
         exposedPackages =
           final: prev: with prev; {
             haskellEnv = callPackage ./Nix/pkgs/haskellEnv.nix { };
+            ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
             python312Env = callPackage ./Nix/pkgs/python312Env.nix { inherit inputs; };
             python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { };
