@@ -14,5 +14,4 @@ stdenv.mkDerivation rec {
     hash = "sha256-aKMcuApvnPrRpTDCd83vNWYrB8rTU/5Mgyhzal8n61A=";
   };
   nativeBuildInputs = [ cmake ];
-  cmakeFlags = [ "-DCMAKE_BUILD_TYPE=Release" ];
 }
