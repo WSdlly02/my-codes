@@ -8,11 +8,8 @@ import System.Directory (
  )
 import System.FilePath ((</>))
 
--- 定义存储文件信息的元组类型
-type FileInfo = ([FilePath], [Integer])
-
 -- 递归遍历并收集文件信息
-listFilesRecursively :: FilePath -> IO FileInfo
+listFilesRecursively :: FilePath -> IO ([FilePath], [Integer])
 listFilesRecursively path = do
   entries <- listDirectory path
   foldM processEntry ([], []) entries -- 初始为空列表，逐步累积结果

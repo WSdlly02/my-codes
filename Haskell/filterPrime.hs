@@ -18,7 +18,7 @@ filterTriangle (x1 : x2 : x3 : xs) =
 
 main :: IO ()
 main = do
-  putStr "请输入一个数字（支持整数/小数）:"
+  putStr "请输入一个数字(支持整数/小数):"
   input <- getLine
   let num = read input :: Integer
   print $ filterTriangle (primes num)

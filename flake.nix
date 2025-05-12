@@ -31,10 +31,7 @@
       legacyPackages = forExposedSystems (
         system:
         with (mkPkgs { inherit system; });
-        self.overlays.exposedPackages null (mkPkgs {
-          inherit system;
-        })
-        // {
+        {
           inC =
             lib.genAttrs
               [
@@ -56,6 +53,7 @@
                 "string"
                 "switch"
                 "test"
+                "triangle"
                 "var"
                 "while"
               ]
@@ -129,6 +127,9 @@
                 }
               );
         }
+        // self.overlays.exposedPackages null (mkPkgs {
+          inherit system;
+        })
       );
 
       mkPkgs =
@@ -143,7 +144,6 @@
             allowAliases = false;
             allowUnfree = true;
             rocmSupport = true; # Notice !!!
-            warnUndeclaredOptions = true;
           } // config;
           overlays = [
             self.overlays.exposedPackages
