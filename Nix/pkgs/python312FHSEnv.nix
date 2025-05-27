@@ -26,6 +26,7 @@ let
       rccl
       miopen
       aotriton
+      composable_kernel
       rocrand
       rocblas
       rocsparse
@@ -48,7 +49,6 @@ let
       rocm-runtime
       clr.icd
       hipify
-      rocm-smi
     ];
   };
 in

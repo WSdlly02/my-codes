@@ -2,7 +2,7 @@
   description = "WSdlly02's Code Library";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
   };
 
   outputs =
@@ -22,6 +22,7 @@
     {
       devShells = forExposedSystems (
         system: with (mkPkgs { inherit system; }); {
+          comfyui = callPackage ./Nix/devShells-comfyui.nix { };
           default = callPackage ./Nix/devShells-default.nix { inherit inputs; };
         }
       );
@@ -65,27 +66,13 @@
                 }
               )
             // {
-              cOneHundred =
-                lib.genAttrs
-                  (lib.forEach [
-                    1
-                    2
-                    3
-                    4
-                    5
-                    6
-                    # 7 9 10 is skipped
-                    8
-                    11
-                    12
-                  ] (x: toString x))
-                  (
-                    packageName:
-                    callPackage ./C {
-                      inherit packageName;
-                      pname = "cOneHundred-" + "${packageName}";
-                    }
-                  );
+              cOneHundred = lib.genAttrs (map (x: toString x) (lib.range 1 12)) (
+                packageName:
+                callPackage ./C {
+                  inherit packageName;
+                  pname = "cOneHundred-" + "${packageName}";
+                }
+              );
             };
           inHaskell = lib.genAttrs [
             "cliargs"
@@ -134,11 +121,12 @@
 
       mkPkgs =
         {
+          nixpkgsInstance ? nixpkgs,
           config ? { },
           overlays ? [ ],
           system,
         }:
-        import nixpkgs {
+        import nixpkgsInstance {
           inherit system;
           config = {
             allowAliases = false;
