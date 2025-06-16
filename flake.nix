@@ -12,7 +12,7 @@
     }@inputs:
     let
       inherit (nixpkgs) lib;
-      inherit (self) mkPkgs;
+      inherit (self.lib) mkPkgs;
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -119,7 +119,7 @@
         })
       );
 
-      mkPkgs =
+      lib.mkPkgs =
         {
           nixpkgsInstance ? nixpkgs,
           config ? { },
@@ -135,12 +135,16 @@
           } // config;
           overlays = [
             self.overlays.exposedPackages
+            (final: prev: {
+              self.outPath = "${nixpkgsInstance}";
+            })
           ] ++ overlays;
         };
 
       overlays = {
         exposedPackages =
           final: prev: with prev; {
+            audio-relay = callPackage ./Nix/pkgs/audio-relay.nix { };
             haskellEnv = callPackage ./Nix/pkgs/haskellEnv.nix { };
             ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };

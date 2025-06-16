@@ -5,14 +5,10 @@ int
 fib (int i, int n, int m)
 {
   if (i == 0)
-    {
-      return n;
-    }
+    return n;
   else
-    {
-      return fib ((i - 1), m, (n + m));
-    }
-} // inspired from Nix
+    return fib ((i - 1), m, (n + m));
+}
 
 int
 main (int argc, char *argv[])
