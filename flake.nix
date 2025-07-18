@@ -6,13 +6,10 @@
   };
 
   outputs =
-    {
-      self,
-      nixpkgs,
-    }@inputs:
+    inputs:
     let
-      inherit (nixpkgs) lib;
-      inherit (self.lib) mkPkgs;
+      inherit (inputs.nixpkgs) lib;
+      inherit (inputs.self.lib) mkPkgs;
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -114,14 +111,14 @@
                 }
               );
         }
-        // self.overlays.exposedPackages null (mkPkgs {
+        // inputs.self.overlays.exposedPackages null (mkPkgs {
           inherit system;
         })
       );
 
       lib.mkPkgs =
         {
-          nixpkgsInstance ? nixpkgs,
+          nixpkgsInstance ? inputs.nixpkgs,
           config ? { },
           overlays ? [ ],
           system,
@@ -134,10 +131,8 @@
             rocmSupport = true; # Notice !!!
           } // config;
           overlays = [
-            self.overlays.exposedPackages
-            (final: prev: {
-              self.outPath = "${nixpkgsInstance}";
-            })
+            inputs.self.overlays.exposedPackages
+            (final: prev: { path = "${nixpkgsInstance}"; })
           ] ++ overlays;
         };
 
