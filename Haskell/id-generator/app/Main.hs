@@ -39,4 +39,4 @@ main = do
   putStrLn $ "Hashed id is: " ++ outputPrefix ++ output ++ "\n"
   putStrLn $ input ++ " -> " ++ outputPrefix ++ output ++ "\n"
   putStrLn $ "The result is appeded to " ++ idListPath
-  appendFile idListPath (input ++ "->" ++ outputPrefix ++ output ++ "\n")
+  appendFile idListPath (input ++ " -> " ++ outputPrefix ++ output ++ "\n")
