@@ -24,7 +24,7 @@
         }
       );
 
-      formatter = forExposedSystems (system: (mkPkgs { inherit system; }).nixfmt-rfc-style);
+      formatter = forExposedSystems (system: (mkPkgs { inherit system; }).nixfmt);
 
       legacyPackages = forExposedSystems (
         system:
@@ -129,11 +129,13 @@
             allowAliases = false;
             allowUnfree = true;
             rocmSupport = true; # Notice !!!
-          } // config;
+          }
+          // config;
           overlays = [
             inputs.self.overlays.exposedPackages
             (final: prev: { path = "${nixpkgsInstance}"; })
-          ] ++ overlays;
+          ]
+          ++ overlays;
         };
 
       overlays = {
@@ -145,6 +147,7 @@
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
             python312Env = callPackage ./Nix/pkgs/python312Env.nix { inherit inputs; };
             python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { };
+            id-generator = haskellPackages.callPackage ./Nix/pkgs/id-generator.nix { };
           };
       };
     };
