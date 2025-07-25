@@ -9,7 +9,7 @@
 }:
 mkDerivation {
   pname = "id-generator";
-  version = "1.0.1.1";
+  version = "1.1.0.0";
   src = ../../Haskell/id-generator;
   isLibrary = false;
   isExecutable = true;

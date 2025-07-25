@@ -1,64 +1,35 @@
-import Control.Exception (IOException, try)
 import Control.Monad (when)
 import Crypto.Hash (SHA512 (SHA512), hashWith)
 import Data.ByteString.Char8 (pack)
-import Data.Char (digitToInt, isAlpha, isDigit)
-import System.Directory (createDirectoryIfMissing)
-import System.Environment (getArgs, lookupEnv)
-import System.Exit (exitFailure)
+import Data.Char (digitToInt, isAlpha)
+import System.Directory (createDirectoryIfMissing, getHomeDirectory)
+import System.Environment (getArgs)
+import System.Exit (exitFailure, exitSuccess)
 import System.IO (hFlush, stdout)
-import System.Info (os)
+import System.IO.Error (tryIOError)
+import System.Info (arch)
 
 computeSHA512 :: String -> String
 computeSHA512 input = show $ hashWith SHA512 (pack input)
 
-getHomeDirectory :: IO String
-getHomeDirectory = case os of
-  x | x == "linux" || x == "linux-android" -> do
-    homeVar <- lookupEnv "HOME"
-    case homeVar of
-      Nothing -> do
-        putStrLn "\n\n$HOME variable missing! ❌"
-        exitFailure
-      Just "" -> do
-        putStrLn "\n\n$HOME variable missing! ❌"
-        exitFailure
-      Just y -> return y
-  "mingw32" -> do
-    homeVar <- lookupEnv "USERPROFILE"
-    case homeVar of
-      Nothing -> do
-        putStrLn "\n\n%USERPROFILE% variable missing! ❌"
-        exitFailure
-      Just "" -> do
-        putStrLn "\n\n%USERPROFILE%  variable missing! ❌"
-        exitFailure
-      Just x -> do
-        return x
-  unknownOS -> do
-    putStrLn $ "\n\nUnknown OS: " ++ unknownOS ++ " ❌"
-    exitFailure
-
 getSSHPrivateKey :: IO String
 getSSHPrivateKey = do
   homeDirectory <- getHomeDirectory
-  sshPrivateKey <- try (readFile (homeDirectory ++ "/.ssh/id_rsa")) :: IO (Either IOException String)
+  sshPrivateKey <- tryIOError (readFile (homeDirectory ++ "/.ssh/id_rsa"))
   case sshPrivateKey of
     Left _ -> do
-      putStrLn "\n\nThe id_rsa ssh key cannot be found in the .ssh directory under your home directory ❌"
+      putStrLn $ "\n\n" ++ homeDirectory ++ "/.ssh/id_rsa cannot be found ❌"
+      exitFailure
+    Right [] -> do
+      putStrLn $ "\n\n" ++ homeDirectory ++ "/.ssh/id_rsa is empty ❌"
       exitFailure
     Right x -> do
       putStrLn " ✔\n"
       return $ concat (drop 1 (init (lines x)))
 
-ensureIDListPathExists :: IO ()
-ensureIDListPathExists = do
-  homeDirectory <- getHomeDirectory
-  when (os /= "linux-android") (createDirectoryIfMissing True (homeDirectory ++ "/Documents"))
-
 main :: IO ()
 main = do
-  putStrLn "id-generator: Generating hashed id"
+  putStrLn "id-generator: Hashing your id"
   args <- getArgs
   input <- case args of
     [] -> do
@@ -74,23 +45,31 @@ main = do
   let hashedInput = computeSHA512 (input ++ sshPrivateKey)
   putStrLn $ "SHA512: " ++ hashedInput ++ "\n ↓"
   let
-    alphaInHashedInput :: String
-    alphaInHashedInput = filter isAlpha hashedInput
-    digitInHashedInput :: [Int]
-    digitInHashedInput = map digitToInt (filter isDigit hashedInput)
+    hashedInputToAlpha :: String
+    hashedInputToAlpha = filter isAlpha hashedInput
+    hashedInputToDigit :: [Int]
+    hashedInputToDigit = map digitToInt hashedInput
     hashedInputFactor :: Double
-    hashedInputFactor = fromIntegral (sum digitInHashedInput) / fromIntegral (length digitInHashedInput) / 10
-    outputHead = take 2 (drop (round $ hashedInputFactor * fromIntegral (length alphaInHashedInput) - 1) alphaInHashedInput)
-    output = take 6 (drop (round $ hashedInputFactor * 128 - 1) hashedInput)
-    idListPath =
-      if os == "linux-android"
-        then homeDirectory ++ "/id-list.txt"
-        else homeDirectory ++ "/Documents/id-list.txt"
-  putStrLn $ "Alpha in SHA512 is: " ++ alphaInHashedInput ++ "\n ↓"
-  putStrLn $ "Digit in SHA512 is: " ++ filter isDigit hashedInput ++ "\n ↓"
+    hashedInputFactor = fromIntegral (sum hashedInputToDigit) / fromIntegral (length hashedInputToDigit) / 16
+    hashedID = prefix ++ body
+     where
+      prefix = take 2 (drop (round $ hashedInputFactor * fromIntegral (length hashedInputToAlpha) - 1) hashedInputToAlpha)
+      body = take 6 (drop (round $ hashedInputFactor * 128 - 1) hashedInput)
+    hashedIDOutputPath =
+      if arch == "x86_64"
+        then homeDirectory ++ "/Documents/id-list.txt"
+        else homeDirectory ++ "/id-list.txt"
+  putStrLn $ "Alpha in SHA512 is: " ++ hashedInputToAlpha ++ "\n ↓"
+  putStrLn $ "Digit in SHA512 is: " ++ show hashedInputToDigit ++ "\n ↓"
   putStrLn $ "Factor is: " ++ show hashedInputFactor ++ "\n ↓"
-  putStrLn $ "Hashed id is: " ++ outputHead ++ output ++ "\n"
-  putStrLn $ input ++ " -> " ++ outputHead ++ output ++ "\n"
-  ensureIDListPathExists
-  putStrLn $ "The result is appeded to " ++ idListPath
-  appendFile idListPath (input ++ " -> " ++ outputHead ++ output ++ "\n")
+  putStrLn $ "Hashed id is: " ++ hashedID ++ "\n"
+  putStrLn $ input ++ " -> " ++ hashedID ++ "\n"
+  when (arch == "x86_64") (createDirectoryIfMissing True (homeDirectory ++ "/Documents"))
+  isAppendSuccess <- tryIOError (appendFile hashedIDOutputPath (input ++ " -> " ++ hashedID ++ "\n"))
+  case isAppendSuccess of
+    Left _ -> do
+      putStrLn $ "Cannot append result in" ++ hashedIDOutputPath ++ " ❌"
+      exitFailure
+    Right _ -> do
+      putStrLn $ "The result is appended to " ++ hashedIDOutputPath ++ " ✔"
+      exitSuccess
