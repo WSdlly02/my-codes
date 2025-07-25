@@ -80,8 +80,8 @@ main = do
     digitInHashedInput = map digitToInt (filter isDigit hashedInput)
     hashedInputFactor :: Double
     hashedInputFactor = fromIntegral (sum digitInHashedInput) / fromIntegral (length digitInHashedInput) / 10
-    outputHead = take 2 (drop (round hashedInputFactor * length alphaInHashedInput - 1) alphaInHashedInput)
-    output = take 6 (drop (round hashedInputFactor * 128 - 1) hashedInput)
+    outputHead = take 2 (drop (round $ hashedInputFactor * fromIntegral (length alphaInHashedInput) - 1) alphaInHashedInput)
+    output = take 6 (drop (round $ hashedInputFactor * 128 - 1) hashedInput)
     idListPath =
       if os == "linux-android"
         then homeDirectory ++ "/id-list.txt"
