@@ -3,9 +3,6 @@
   config,
   dbus,
   fish,
-  gcc,
-  glib,
-  glibc,
   lib,
   libdrm,
   libglvnd,
@@ -60,13 +57,13 @@ buildFHSEnv {
       # Common pkgs
       dbus
       fish
-      gcc
-      glib.out
-      glibc
       libdrm
       libglvnd
       python312Env
-      stdenv.cc.cc.lib
+      stdenv.cc # gcc
+      stdenv.cc.libc # glibc
+      # stdenv.cc.cc -> gcc-unwrapped
+      stdenv.cc.cc.lib # gcc-unwrapped-lib
       udev
       zlib
       zstd
