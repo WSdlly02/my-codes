@@ -16,6 +16,7 @@ getSSHPrivateKey :: IO String
 getSSHPrivateKey = do
   homeDirectory <- getHomeDirectory
   sshPrivateKey <- tryIOError (readFile (homeDirectory ++ "/.ssh/id_rsa"))
+
   case sshPrivateKey of
     Left _ -> do
       putStrLn $ "\n\n" ++ homeDirectory ++ "/.ssh/id_rsa cannot be found ❌"
@@ -30,6 +31,7 @@ getSSHPrivateKey = do
 main :: IO ()
 main = do
   putStrLn "id-generator: Hashing your id"
+
   args <- getArgs
   input <- case args of
     [] -> do
@@ -37,13 +39,19 @@ main = do
       hFlush stdout
       getLine
     (x : _) -> return x
+
   putStrLn $ "\nThe original id is \"" ++ input ++ "\" ✔\n"
   putStr "Reading SSH private key..."
+
   homeDirectory <- getHomeDirectory
   sshPrivateKey <- getSSHPrivateKey
+
   putStrLn "Caculating hashed id...\n"
+
   let hashedInput = computeSHA512 (input ++ sshPrivateKey)
+
   putStrLn $ "SHA512: " ++ hashedInput ++ "\n ↓"
+
   let
     hashedInputToAlpha :: String
     hashedInputToAlpha = filter isAlpha hashedInput
@@ -59,13 +67,17 @@ main = do
       if arch == "x86_64"
         then homeDirectory ++ "/Documents/id-list.txt"
         else homeDirectory ++ "/id-list.txt"
+
   putStrLn $ "Alpha in SHA512 is: " ++ hashedInputToAlpha ++ "\n ↓"
   putStrLn $ "Digit in SHA512 is: " ++ show hashedInputToDigit ++ "\n ↓"
   putStrLn $ "Factor is: " ++ show hashedInputFactor ++ "\n ↓"
   putStrLn $ "Hashed id is: " ++ hashedID ++ "\n"
   putStrLn $ input ++ " -> " ++ hashedID ++ "\n"
+
   when (arch == "x86_64") (createDirectoryIfMissing True (homeDirectory ++ "/Documents"))
+
   isAppendSuccess <- tryIOError (appendFile hashedIDOutputPath (input ++ " -> " ++ hashedID ++ "\n"))
+
   case isAppendSuccess of
     Left _ -> do
       putStrLn $ "Cannot append result in" ++ hashedIDOutputPath ++ " ❌"

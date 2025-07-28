@@ -1,18 +1,7 @@
 {
   buildFHSEnv,
-  config,
-  dbus,
-  fish,
-  lib,
-  libdrm,
-  libglvnd,
   rocmPackages,
-  python312Env,
-  stdenv,
   symlinkJoin,
-  udev,
-  zlib,
-  zstd,
 }:
 let
   rocmtoolkit_joined = symlinkJoin {
@@ -50,16 +39,17 @@ let
   };
 in
 buildFHSEnv {
-  name = "python312FHSEnv";
+  name = "python3FHSEnv";
   targetPkgs =
-    pkgs:
+    f:
+    with f;
     [
       # Common pkgs
       dbus
       fish
       libdrm
       libglvnd
-      python312Env
+      python3Env
       stdenv.cc # gcc
       stdenv.cc.libc # glibc
       # stdenv.cc.cc -> gcc-unwrapped

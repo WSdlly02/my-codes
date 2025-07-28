@@ -29,15 +29,12 @@
   ])
 */
 {
-  extraPackages ? [ ], # For devShells
-  inputs,
-  python312,
-  stdenv,
+  extraPackages ? f: [ ], # For devShells
+  python3,
 }:
-python312.withPackages (
-  python312Packages: # just formal arguement
-  with python312Packages;
-  with inputs.self.legacyPackages."${stdenv.hostPlatform.system}"; # For persistent buildInputs
+python3.withPackages (
+  f: # just formal arguement
+  with f;
   [
     numpy
     pandas
@@ -49,5 +46,5 @@ python312.withPackages (
     sympy
     virtualenv
   ]
-  ++ extraPackages
+  ++ (extraPackages f)
 )

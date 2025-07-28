@@ -1,10 +1,10 @@
 {
-  extraPackages ? [ ],
-  haskellPackages,
+  extraPackages ? f: [ ],
+  ghcWithPackages,
 }:
-haskellPackages.ghcWithPackages (
-  haskellPackages:
-  with haskellPackages;
+ghcWithPackages (
+  f:
+  with f;
   [
     cabal-gild
     cabal-install
@@ -12,5 +12,5 @@ haskellPackages.ghcWithPackages (
     haskell-language-server
     stack
   ]
-  ++ extraPackages
+  ++ (extraPackages f)
 )

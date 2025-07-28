@@ -19,7 +19,6 @@
     {
       devShells = forExposedSystems (
         system: with (mkPkgs { inherit system; }); {
-          comfyui = callPackage ./Nix/devShells-comfyui.nix { };
           default = callPackage ./Nix/devShells-default.nix { inherit inputs; };
         }
       );
@@ -30,47 +29,7 @@
         system:
         with (mkPkgs { inherit system; });
         {
-          inC =
-            lib.genAttrs
-              [
-                "array"
-                "boolean"
-                "discount"
-                ##"duplicated-file-searcher"
-                "fibonacci"
-                "float"
-                "for"
-                "logical"
-                "loops"
-                "math"
-                "pi"
-                "pointer"
-                "project-routine-scheduler"
-                "readcsv"
-                "scanf"
-                "string"
-                "switch"
-                "test"
-                "triangle"
-                "var"
-                "while"
-              ]
-              (
-                packageName:
-                callPackage ./C {
-                  inherit packageName;
-                  pname = packageName;
-                }
-              )
-            // {
-              cOneHundred = lib.genAttrs (map (x: toString x) (lib.range 1 12)) (
-                packageName:
-                callPackage ./C {
-                  inherit packageName;
-                  pname = "cOneHundred-" + "${packageName}";
-                }
-              );
-            };
+          inC = import ./Nix/pkgs/inC.nix { inherit callPackage lib; };
           inHaskell = lib.genAttrs [
             "cliargs"
             "input"
@@ -87,13 +46,8 @@
               ]
               (
                 packageName:
-                # pkgs.runCommandLocal just running commands without leaving any executable files
-                # But nix run .# requires a binary to execute
-                # It's just suitable for installing some misc files
-                # Shebang will inherit env vars
-                # But cannot export $PATH vars
                 writeShellScriptBin "${packageName}-wrapper" ''
-                  python3.12 ./Python/${packageName}.py $@
+                  python3 ./Python/${packageName}.py $@
                 ''
               );
           inRust =
@@ -112,6 +66,9 @@
               );
         }
         // inputs.self.overlays.exposedPackages null (mkPkgs {
+          inherit system;
+        })
+        // inputs.self.overlays.extraPackages null (mkPkgs {
           inherit system;
         })
       );
@@ -142,13 +99,17 @@
         exposedPackages =
           final: prev: with prev; {
             audio-relay = callPackage ./Nix/pkgs/audio-relay.nix { };
-            haskellEnv = callPackage ./Nix/pkgs/haskellEnv.nix { };
             ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
-            python312Env = callPackage ./Nix/pkgs/python312Env.nix { inherit inputs; };
-            python312FHSEnv = callPackage ./Nix/pkgs/python312FHSEnv.nix { };
+            # Haskell packages
             id-generator = haskellPackages.callPackage ./Nix/pkgs/id-generator.nix { };
+            haskellEnv = haskellPackages.callPackage ./Nix/pkgs/haskellEnv.nix { };
+            # Python packages
+            pystun3 = python3Packages.callPackage ./Nix/pkgs/pystun3.nix { };
+            python3Env = python3Packages.callPackage ./Nix/pkgs/python3Env.nix { };
+            python3FHSEnv = callPackage ./Nix/pkgs/python3FHSEnv.nix { };
           };
+        extraPackages = final: prev: { };
       };
     };
 }

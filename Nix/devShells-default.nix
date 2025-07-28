@@ -1,30 +1,25 @@
 {
   haskellEnv,
-  haskellPackages,
-  inputs,
   mkShell,
-  python312Env,
-  python312Packages,
-  stdenv,
+  python3Env,
 }:
 
 mkShell {
   packages = [
     (haskellEnv.override {
-      extraPackages = with haskellPackages; [
-        # Libs
-        JuicyPixels
-        http-types
-        warp
-        mime-types
-        websockets
-      ];
-    })
-    (python312Env.override {
       extraPackages =
-        with python312Packages;
-        with inputs.self.legacyPackages."${stdenv.hostPlatform.system}";
-        [
+        f: with f; [
+          # Libs
+          JuicyPixels
+          http-types
+          warp
+          mime-types
+          websockets
+        ];
+    })
+    (python3Env.override {
+      extraPackages =
+        f: with f; [
           # Daily runtimes
           flask
           icalendar # For generating calendar files
