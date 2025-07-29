@@ -1,11 +1,19 @@
 /*
   Notice:
-
-  python3 = python312; # which is defined in <nixpkgs/pkgs/top-level/all-packages.nix>
-  python3Packages = dontRecurseIntoAttrs python312Packages; # same as above
-  python312Packages = recurseIntoAttrs python312.pkgs; # same as above
+  <nixpkgs/pkgs/top-level/all-packages.nix>:
+  inherit (pythonInterpreters) python313;
+  python3 = python313;
+  python3Packages = dontRecurseIntoAttrs python313Packages; # same as above
+  python313Packages = recurseIntoAttrs python313.pkgs; # same as above
   some packages requires old python-modules will specific {python3 = python311;} in args
 
+  <nixpkgs/pkgs/development/interpreters/python>:
+  python313 = {
+    self = __splicedPackages.python313;
+    inherit passthruFun; # withPackages,pkgs,...
+  };
+
+  <nixpkgs/pkgs/development/interpreters/passthrufun.nix>:
   buildEnv = callPackage ./wrapper.nix {
     python = self;
     inherit (pythonPackages) requiredPythonModules;
@@ -17,13 +25,12 @@
   "toPythonApplication" converts a Python library to an application, which is defined in <nixpkgs/pkgs/development/interpreters/python/python-packages-base.nix>
 
   python3.buildEnv.override {
-    extraLibs = [ python3Packages.pyramid ];
-    ignoreCollisions = true;
+    extraLibs = [ (f pythonPackages) ];
   }
 
   is equals to
 
-  python3.withPackages (python312Packages: with python312Packages; [ # It will pass python312Packages as this func's arg
+  python3.withPackages (f: with f; [ # It will pass pythonPackages as this func's arg
     numpy
     requests
   ])
@@ -33,7 +40,8 @@
   python3,
 }:
 python3.withPackages (
-  f: # just formal arguement
+  # it will filter packages with attribute "pythonModule"
+  f: # f <- python3Packages
   with f;
   [
     numpy

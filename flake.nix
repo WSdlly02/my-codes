@@ -19,7 +19,7 @@
     {
       devShells = forExposedSystems (
         system: with (mkPkgs { inherit system; }); {
-          default = callPackage ./Nix/devShells-default.nix { inherit inputs; };
+          default = callPackage ./Nix/devShells-default.nix { };
         }
       );
 
@@ -29,41 +29,11 @@
         system:
         with (mkPkgs { inherit system; });
         {
-          inC = import ./Nix/pkgs/inC.nix { inherit callPackage lib; };
-          inHaskell = lib.genAttrs [
-            "cliargs"
-            "input"
-          ] (packageName: callPackage ./Haskell { pname = packageName; });
-          inPython =
-            lib.genAttrs
-              [
-                "class-schedule"
-                "duplicated-file-searcher"
-                "fibonacci"
-                "project-routine-scheduler"
-                "roots-resolver"
-                "teaching-week-reminder"
-              ]
-              (
-                packageName:
-                writeShellScriptBin "${packageName}-wrapper" ''
-                  python3 ./Python/${packageName}.py $@
-                ''
-              );
-          inRust =
-            lib.genAttrs
-              [
-                "fibonacci"
-                "guessing-game"
-                "hello-world"
-                "temperature-converter"
-              ]
-              (
-                packageName:
-                callPackage ./Rust {
-                  pname = packageName;
-                }
-              );
+          # Packages here won't be exposed and used as a library
+          inC = callPackage ./Nix/pkgs/language-specific/inC.nix { };
+          inHaskell = callPackage ./Nix/pkgs/language-specific/inHaskell.nix { };
+          inPython = callPackage ./Nix/pkgs/language-specific/inPython.nix { };
+          inRust = callPackage ./Nix/pkgs/language-specific/inRust.nix { };
         }
         // inputs.self.overlays.exposedPackages null (mkPkgs {
           inherit system;
@@ -90,6 +60,7 @@
           // config;
           overlays = [
             inputs.self.overlays.exposedPackages
+            inputs.self.overlays.extraPackages
             (final: prev: { path = "${nixpkgsInstance}"; })
           ]
           ++ overlays;
@@ -98,6 +69,7 @@
       overlays = {
         exposedPackages =
           final: prev: with prev; {
+            # Packages here will be exposed to nix-config and used as library
             audio-relay = callPackage ./Nix/pkgs/audio-relay.nix { };
             ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
@@ -106,10 +78,23 @@
             haskellEnv = haskellPackages.callPackage ./Nix/pkgs/haskellEnv.nix { };
             # Python packages
             pystun3 = python3Packages.callPackage ./Nix/pkgs/pystun3.nix { };
-            python3Env = python3Packages.callPackage ./Nix/pkgs/python3Env.nix { };
+            python3Env = callPackage ./Nix/pkgs/python3Env.nix { };
             python3FHSEnv = callPackage ./Nix/pkgs/python3FHSEnv.nix { };
           };
-        extraPackages = final: prev: { };
+        extraPackages = final: prev: {
+          # Packages here will be used as library but won't be exposed
+
+          /*
+            python3 = prev.python3.override {
+              packageOverrides = pyfinal: pyprev: {
+                torch = pyprev.torch.override {
+                  rocmSupport = true;
+                  vulkanSupport = true;
+                };
+              };
+            };
+          */
+        };
       };
     };
 }
