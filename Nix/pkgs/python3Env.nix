@@ -37,9 +37,9 @@
 */
 {
   extraPackages ? f: [ ], # For devShells
-  python3,
+  python, # generic python parameter, equals to python3Packages.python
 }:
-python3.withPackages (
+python.withPackages (
   # it will filter packages with attribute "pythonModule"
   f: # f <- python3Packages
   with f;

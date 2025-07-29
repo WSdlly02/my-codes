@@ -1,5 +1,4 @@
 {
-  callPackage,
   lib,
   rustPlatform,
 }:
@@ -12,7 +11,7 @@ lib.genAttrs
   ]
   (
     packageName:
-    callPackage (
+    rustPlatform.callPackage (
       { packageName }:
       let
         pname = packageName;

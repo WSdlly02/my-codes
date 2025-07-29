@@ -31,7 +31,7 @@
 }:
 ghcWithPackages (
   # it will filter packages with attribute "isHaskellLibrary"
-  f:
+  f: # f <- haskellPackges
   with f;
   [
     cabal-gild

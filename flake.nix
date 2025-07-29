@@ -78,7 +78,7 @@
             haskellEnv = haskellPackages.callPackage ./Nix/pkgs/haskellEnv.nix { };
             # Python packages
             pystun3 = python3Packages.callPackage ./Nix/pkgs/pystun3.nix { };
-            python3Env = callPackage ./Nix/pkgs/python3Env.nix { };
+            python3Env = python3Packages.callPackage ./Nix/pkgs/python3Env.nix { };
             python3FHSEnv = callPackage ./Nix/pkgs/python3FHSEnv.nix { };
           };
         extraPackages = final: prev: {
