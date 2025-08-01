@@ -36,9 +36,7 @@ ghcWithPackages (
   [
     cabal-gild
     cabal-install
-    fourmolu # Formatter
     haskell-language-server
-    stack
   ]
   ++ (extraPackages f)
 )
