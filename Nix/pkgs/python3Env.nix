@@ -44,6 +44,7 @@ python.withPackages (
   f: # f <- python3Packages
   with f;
   [
+    matplotlib
     numpy
     pandas
     psutil
@@ -53,6 +54,7 @@ python.withPackages (
     scrapy
     sympy
     virtualenv
+    yfinance
   ]
   ++ (extraPackages f)
 )
