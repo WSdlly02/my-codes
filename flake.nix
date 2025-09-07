@@ -61,7 +61,6 @@
           overlays = [
             inputs.self.overlays.exposedPackages
             inputs.self.overlays.extraPackages
-            (final: prev: { path = "${nixpkgsInstance}"; })
           ]
           ++ overlays;
         };
