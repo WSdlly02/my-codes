@@ -27,7 +27,8 @@ dns:
     - https://8.8.8.8/dns-query
   enable: true
   ipv6: true
-  cache-algorithm: arc
+  cache-algorithm: lru
+  cache-size: 10240
   listen: 0.0.0.0:10053
   nameserver:
     - https://dns.alidns.com/dns-query
@@ -62,7 +63,7 @@ dns:
   use-system-hosts: false
 tun:
   enable: true
-  device: mihomo-tun
+  device: tun-mihomo
   stack: system
   auto-route: true
   auto-redirect: true
@@ -874,6 +875,9 @@ proxy-groups:
       - 🇸🇦 沙特-广东专线 STC
       - 🇨🇳 南极-广东专线 WARP
 rules:
+  - IP-CIDR,100.64.0.0/10,DIRECT
+  - DOMAIN-SUFFIX,ts.net,DIRECT
+  - DOMAIN-SUFFIX,tailscale.com,DIRECT
   - DOMAIN-SUFFIX,nixos.org,🚀 节点选择
   - DOMAIN-SUFFIX,acl4.ssr,🎯 全球直连
   - DOMAIN-SUFFIX,ip6-localhost,🎯 全球直连

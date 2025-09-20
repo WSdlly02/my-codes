@@ -44,6 +44,7 @@ python.withPackages (
   f: # f <- python3Packages
   with f;
   [
+    markitdown
     matplotlib
     numpy
     pandas
