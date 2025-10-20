@@ -6,8 +6,6 @@
 }:
 let
   entrypoint = writeShellScriptBin "entrypoint" ''
-    set -e
-
     echo "[INFO] FHS Entrypoint: Setting up environment..."
 
     # 1. 动态查找 FHS 环境中的 site-packages 路径
