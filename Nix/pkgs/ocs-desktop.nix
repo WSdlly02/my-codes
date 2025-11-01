@@ -19,10 +19,10 @@ let
   appimageContents = appimageTools.extract {
     inherit pname version src;
     postExtract = ''
+      mkdir -p $out/resources/bin/chrome/chrome
       ${libarchive}/bin/bsdtar -xf $out/resources/bin/chrome/chrome.zip \
         --strip-components=2 \
-        -C $out/resources/bin/chrome/
-      rm $out/resources/bin/chrome/chrome.zip
+        -C $out/resources/bin/chrome/chrome
     '';
   };
 in
@@ -32,6 +32,6 @@ appimageTools.wrapAppImage {
   extraInstallCommands = ''
     install -m 444 -D ${appimageContents}/ocs\ desktop.desktop -t $out/share/applications
     substituteInPlace $out/share/applications/ocs\ desktop.desktop \
-      --replace 'Exec=AppRun --no-sandbox %U' 'Exec=${pname} --no-sandbox %U'
+      --replace-fail 'Exec=AppRun --no-sandbox %U' 'Exec=${pname} --no-sandbox %U'
   '';
 }
