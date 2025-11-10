@@ -1,5 +1,6 @@
 {
   buildFHSEnv,
+  config,
   rocmPackages,
   symlinkJoin,
   writeShellScriptBin,
@@ -28,44 +29,49 @@ let
     # 4. 移交控制权给 fish shell
     fish
   '';
+  vendorComposableKernel = config.rocmSupport && !rocmPackages.composable_kernel.anyMfmaTarget;
   rocmtoolkit_joined = symlinkJoin {
     name = "rocm-merged";
-    paths = with rocmPackages; [
-      rocm-core
-      clr
-      rccl
-      miopen
-      aotriton
-      composable_kernel
-      rocrand
-      rocblas
-      rocsparse
-      hipsparse
-      rocthrust
-      rocprim
-      hipcub
-      roctracer
-      rocfft
-      rocsolver
-      hipfft
-      hiprand
-      hipsolver
-      hipblas-common
-      hipblas
-      hipblaslt
-      rocminfo
-      rocm-comgr
-      rocm-device-libs
-      rocm-runtime
-      rocm-smi
-      clr.icd
-      hipify
-      # Optional
-      # magma-hip
-      # llvm.openmp
-      # nccl
-      # clr
-    ];
+    paths =
+      with rocmPackages;
+      [
+        rocm-core
+        clr
+        rccl
+        miopen
+        aotriton
+        rocrand
+        rocblas
+        rocsparse
+        hipsparse
+        rocthrust
+        rocprim
+        hipcub
+        roctracer
+        rocfft
+        rocsolver
+        hipfft
+        hiprand
+        hipsolver
+        hipblas-common
+        hipblas
+        hipblaslt
+        rocminfo
+        rocm-comgr
+        rocm-device-libs
+        rocm-runtime
+        rocm-smi
+        clr.icd
+        hipify
+        # Optional
+        # magma-hip
+        # llvm.openmp
+        # nccl
+        # clr
+      ]
+      ++ lib.optionals (!vendorComposableKernel) [
+        composable_kernel
+      ];
     postBuild = ''
       rm -rf $out/nix-support
     '';

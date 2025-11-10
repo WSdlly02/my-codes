@@ -72,6 +72,7 @@
             audio-relay = callPackage ./Nix/pkgs/audio-relay.nix { };
             ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
+            qoder = callPackage ./Nix/pkgs/qoder.nix { };
             # Haskell packages
             id-generator = haskellPackages.callPackage ./Nix/pkgs/id-generator.nix { };
             haskellEnv = haskellPackages.callPackage ./Nix/pkgs/haskellEnv.nix { };
