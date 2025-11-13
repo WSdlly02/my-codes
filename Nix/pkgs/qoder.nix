@@ -45,11 +45,11 @@
 }:
 stdenv.mkDerivation rec {
   pname = "qoder";
-  version = "0.2.12-1762247531";
+  version = "0.2.14-1762937163";
 
   src = fetchurl {
     url = "https://download.qoder.com/release/latest/qoder_amd64.deb";
-    hash = "sha256-W5D5zSy1CtIV/U9LKnulhIs/P4/qKi7Ok2YZ9K3rgnc=";
+    hash = "sha256-Mg+rrcpR5Cd4h38tE6t4Mm9NUyrav2+T44WVoRkOTrg=";
   };
 
   sourceRoot = ".";

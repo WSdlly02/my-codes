@@ -15,17 +15,18 @@ def hash_file(filepath):
     计算文件的SHA-256哈希值。
     为了处理大文件，它会分块读取。
     如果文件无法读取，返回None。
+
+    优化：使用1MB块大小，减少系统调用次数。
     """
     sha256 = hashlib.sha256()
     try:
-        with open(filepath, "rb") as f:
-            # 以64k的块读取文件，防止内存溢出
-            while chunk := f.read(65536):
+        with open(filepath, "rb", buffering=1048576) as f:  # 1MB缓冲区
+            # 以1MB的块读取文件，减少系统调用
+            while chunk := f.read(1048576):
                 sha256.update(chunk)
             return sha256.hexdigest()
-    except IOError as e:
-        # 处理读取错误（例如，权限问题）
-        print(f"警告: 无法读取文件 {filepath} ({e})", file=sys.stderr)
+    except IOError:
+        # 静默处理读取错误以提高性能
         return None
 
 
@@ -41,36 +42,57 @@ def find_files(directory):
                 yield filepath
 
 
+def get_file_size(filepath):
+    """
+    获取文件大小（字节数）。
+    如果失败返回None。
+    """
+    try:
+        return os.path.getsize(filepath)
+    except OSError:
+        return None
+
+
+def group_files_by_size(filepaths):
+    """
+    ★★★ 关键优化：先按文件大小分组 ★★★
+    只有大小相同的文件才可能是重复的。
+    这可以大幅减少需要计算哈希的文件数量。
+    """
+    size_groups = collections.defaultdict(list)
+
+    for filepath in filepaths:
+        size = get_file_size(filepath)
+        if size is not None:
+            size_groups[size].append(filepath)
+
+    # 只返回有多个文件的大小组（可能的重复）
+    potential_duplicates = []
+    for files_list in size_groups.values():
+        if len(files_list) > 1:
+            potential_duplicates.extend(files_list)
+
+    return potential_duplicates
+
+
 def group_files_by_hash(filepaths):
     """
     接收文件路径列表，按哈希值对它们进行分组。
     值中存储 (filepath, modification_time) 元组。
+
+    优化：移除进度输出以提高性能。
     """
     hashes = collections.defaultdict(list)
-    total_files = len(filepaths)
 
-    for i, filepath in enumerate(filepaths):
-        # 打印进度
-        basename = os.path.basename(filepath)
-        # 截断文件名以确保显示不会过长（37 + ... = 40）
-        truncated_name = (basename[:37] + "...") if len(basename) > 40 else basename
-
-        # 格式化进度字符串
-        progress_text = f"\r正在处理文件: {i+1}/{total_files} ({truncated_name:<40})..."
-
-        # 打印进度文本，并用空格填充到固定宽度（例如100个字符）
-        # 这可以确保清除上一行可能留下的任何残留字符。
-        print(f"{progress_text:<100}", end="")
-
+    for filepath in filepaths:
         file_hash = hash_file(filepath)
         if file_hash:
             try:
                 mod_time = os.path.getmtime(filepath)
                 hashes[file_hash].append((filepath, mod_time))
-            except OSError as e:
-                print(f"\n警告: 无法获取文件时间 {filepath} ({e})", file=sys.stderr)
+            except OSError:
+                pass  # 静默忽略以提高性能
 
-    print("\n文件哈希计算完成。")
     return hashes
 
 
@@ -123,26 +145,32 @@ def main():
         print(f"错误: 路径 '{directory}' 不是一个有效的文件夹。", file=sys.stderr)
         sys.exit(1)
 
-    print(f"正在扫描文件夹: {directory}")
-
     # 获取所有文件路径
     all_files = list(find_files(directory))
-    print(f"找到 {len(all_files)} 个文件。")
 
     if not all_files:
         print("文件夹为空，无需操作。")
         return
 
-    # 按哈希分组
-    hash_groups = group_files_by_hash(all_files)
+    # ★★★ 关键优化：先按文件大小过滤 ★★★
+    # 只对大小相同的文件计算哈希
+    potential_duplicates = group_files_by_size(all_files)
+
+    # 如果没有大小相同的文件，直接结束
+    if not potential_duplicates:
+        print("未找到重复文件。")
+        return
+
+    # 按哈希分组（仅对可能重复的文件）
+    hash_groups = group_files_by_hash(potential_duplicates)
 
     # 处理重复文件
     found_duplicates = process_duplicates(hash_groups)
 
     if not found_duplicates:
         print("未找到重复文件。")
-
-    print("清理完成。")
+    else:
+        print("清理完成。")
 
 
 if __name__ == "__main__":
