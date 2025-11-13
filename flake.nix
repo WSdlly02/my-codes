@@ -33,31 +33,34 @@
           }
           // config;
           overlays = [
+            inputs.self.overlays.default
             inputs.self.overlays.exposedPackages
-            inputs.self.overlays.extraPackages
+            inputs.self.overlays.libraryPackages
           ]
           ++ overlays;
         };
       overlays = {
-        exposedPackages =
-          final: prev: inputs.self.legacyPackages."${prev.stdenv.hostPlatform.system}".exposedPackages;
-        # Packages here will be exposed to nix-config and used as library
-
-        extraPackages =
-          final: prev: inputs.self.legacyPackages."${prev.stdenv.hostPlatform.system}".extraPackages;
-        # Packages here will be used as library but won't be exposed
-        /*
-          {
-            python3 = prev.python3.override {
-              packageOverrides = pyfinal: pyprev: {
-                torch = pyprev.torch.override {
-                  rocmSupport = true;
-                  vulkanSupport = true;
+        default = final: prev: {
+          # Overlays here will be applied to all packages
+          /*
+            {
+              python3 = prev.python3.override {
+                packageOverrides = pyfinal: pyprev: {
+                  torch = pyprev.torch.override {
+                    rocmSupport = true;
+                    vulkanSupport = true;
+                  };
                 };
               };
-            };
-          }
-        */
+            }
+          */
+        };
+        exposedPackages =
+          # Packages here will be exposed to nix-config and used as library
+          final: prev: inputs.self.legacyPackages."${prev.stdenv.hostPlatform.system}".exposedPackages;
+        libraryPackages =
+          # Packages here will be used as library but won't be exposed
+          final: prev: inputs.self.legacyPackages."${prev.stdenv.hostPlatform.system}".libraryPackages;
       };
     }
     // forExposedSystems (
@@ -85,7 +88,7 @@
             python3Env = python3Packages.callPackage ./Nix/pkgs/python3Env.nix { };
             python3FHSEnv = callPackage ./Nix/pkgs/python3FHSEnv.nix { };
           };
-          extraPackages = { };
+          libraryPackages = { };
         };
       }
     );
