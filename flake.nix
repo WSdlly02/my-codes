@@ -56,11 +56,21 @@
           */
         };
         exposedPackages =
-          # Packages here will be exposed to nix-config and used as library
-          final: prev: inputs.self.legacyPackages."${prev.stdenv.hostPlatform.system}".exposedPackages;
+          # Packages here will be exposed and used as libraries in other parts of the flake
+          final: prev:
+          let
+            sys = prev.stdenv.hostPlatform.system;
+            lp = inputs.self.legacyPackages;
+          in
+          if builtins.hasAttr sys lp then (builtins.getAttr sys lp).exposedPackages else { };
         libraryPackages =
           # Packages here will be used as library but won't be exposed
-          final: prev: inputs.self.legacyPackages."${prev.stdenv.hostPlatform.system}".libraryPackages;
+          final: prev:
+          let
+            sys = prev.stdenv.hostPlatform.system;
+            lp = inputs.self.legacyPackages;
+          in
+          if builtins.hasAttr sys lp then (builtins.getAttr sys lp).libraryPackages else { };
       };
     }
     // forExposedSystems (
