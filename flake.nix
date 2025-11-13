@@ -39,39 +39,33 @@
           ]
           ++ overlays;
         };
-      overlays = {
-        default = final: prev: {
-          # Overlays here will be applied to all packages
-          /*
-            {
-              python3 = prev.python3.override {
-                packageOverrides = pyfinal: pyprev: {
-                  torch = pyprev.torch.override {
-                    rocmSupport = true;
-                    vulkanSupport = true;
+      overlays =
+        let
+          lp = inputs.self.legacyPackages;
+        in
+        {
+          default = final: prev: {
+            # Overlays here will be applied to all packages
+            /*
+              {
+                python3 = prev.python3.override {
+                  packageOverrides = pyfinal: pyprev: {
+                    torch = pyprev.torch.override {
+                      rocmSupport = true;
+                      vulkanSupport = true;
+                    };
                   };
                 };
-              };
-            }
-          */
+              }
+            */
+          };
+          exposedPackages =
+            # Packages here will be exposed and used as libraries in other parts of the flake
+            final: prev: (lp.${prev.stdenv.hostPlatform.system} or { }).exposedPackages or { };
+          libraryPackages =
+            # Packages here will be used as library but won't be exposed
+            final: prev: (lp.${prev.stdenv.hostPlatform.system} or { }).libraryPackages or { };
         };
-        exposedPackages =
-          # Packages here will be exposed and used as libraries in other parts of the flake
-          final: prev:
-          let
-            sys = prev.stdenv.hostPlatform.system;
-            lp = inputs.self.legacyPackages;
-          in
-          if builtins.hasAttr sys lp then (builtins.getAttr sys lp).exposedPackages else { };
-        libraryPackages =
-          # Packages here will be used as library but won't be exposed
-          final: prev:
-          let
-            sys = prev.stdenv.hostPlatform.system;
-            lp = inputs.self.legacyPackages;
-          in
-          if builtins.hasAttr sys lp then (builtins.getAttr sys lp).libraryPackages else { };
-      };
     }
     // forExposedSystems (
       system: with (pkgs' { inherit system; }); {
