@@ -39,33 +39,27 @@
           ]
           ++ overlays;
         };
-      overlays =
-        let
-          lp = inputs.self.legacyPackages;
-        in
-        {
-          default = final: prev: {
-            # Overlays here will be applied to all packages
-            /*
-              {
-                python3 = prev.python3.override {
-                  packageOverrides = pyfinal: pyprev: {
-                    torch = pyprev.torch.override {
-                      rocmSupport = true;
-                      vulkanSupport = true;
-                    };
-                  };
-                };
-              }
-            */
+      overlays = {
+        default = final: prev: {
+          # Overlays here will be applied to all packages
+          python3 = prev.python3.override {
+            packageOverrides =
+              pyfinal: pyprev:
+              builtins.mapAttrs (
+                _: pypkg: if pypkg ? rocmSupport then pypkg.override { rocmSupport = true; } else pypkg
+              ) pyprev;
           };
-          exposedPackages =
-            # Packages here will be exposed and used as libraries in other parts of the flake
-            final: prev: (lp.${prev.stdenv.hostPlatform.system} or { }).exposedPackages or { };
-          libraryPackages =
-            # Packages here will be used as library but won't be exposed
-            final: prev: (lp.${prev.stdenv.hostPlatform.system} or { }).libraryPackages or { };
+          python3Packages = final.python3.pkgs;
         };
+        exposedPackages =
+          # Packages here will be exposed and used as libraries in other parts of the flake
+          final: prev:
+          (inputs.self.legacyPackages.${prev.stdenv.hostPlatform.system} or { }).exposedPackages or { };
+        libraryPackages =
+          # Packages here will be used as library but won't be exposed
+          final: prev:
+          (inputs.self.legacyPackages.${prev.stdenv.hostPlatform.system} or { }).libraryPackages or { };
+      };
     }
     // forExposedSystems (
       system: with (pkgs' { inherit system; }); {

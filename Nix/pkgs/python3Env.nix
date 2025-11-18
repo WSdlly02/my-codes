@@ -48,6 +48,7 @@ python.withPackages (
     numpy
     pandas
     psutil
+    pyyaml
     requests
     scikit-learn
     scipy
