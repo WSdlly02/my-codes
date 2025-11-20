@@ -49,7 +49,7 @@ stdenv.mkDerivation rec {
 
   src = fetchurl {
     url = "https://download.qoder.com/release/latest/qoder_amd64.deb";
-    hash = "sha256-CfQq204pd2vMFi1X0y5T3CWt8sVF8e/u1Pd6f/Wkph8=";
+    hash = "sha256-Rx5Z2UMoccvvcOQmsbNQj9BZU3SVHclsdZGTNvKUzZE=";
   };
 
   sourceRoot = ".";
