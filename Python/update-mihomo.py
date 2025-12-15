@@ -39,7 +39,13 @@ LOCAL_CONFIG = MIHOMO_DIR / "config.yaml"
 SERVICE_NAME = "mihomo.service"
 
 # 从远程配置中直接覆盖的键（常见：proxies / proxy-groups / rules）
-KEYS_FROM_REMOTE = ["proxies", "proxy-groups", "rules"]
+KEYS_FROM_REMOTE = ["proxies", "proxy-groups"]
+
+# 在远程 rules 之前插入的自定义规则列表
+CUSTOM_RULES = [
+    "DOMAIN,yviy85pxhv.bytevirt.com,🎯 全球直连",
+    "IP-CIDR,31.57.172.176/32,🎯 全球直连,no-resolve",
+]
 
 # 是否在写回之前备份本地配置
 ENABLE_BACKUP = True
@@ -135,6 +141,18 @@ def merge_configs(old_cfg: dict, remote_cfg: dict) -> dict:
             merged[key] = remote_cfg[key]
             print(f"[mihomo-update] updated key from remote: {key}")
 
+    # 补充的键
+    if "rules" in remote_cfg:
+        remote_rules = remote_cfg.get("rules") or []
+        # 保证是 list
+        if not isinstance(remote_rules, list):
+            print("WARNING: remote rules is not a list, skip merge")
+        else:
+            merged_rules = list(CUSTOM_RULES) + remote_rules
+            merged["rules"] = merged_rules
+            print(
+                f"rules merged: {len(CUSTOM_RULES)} custom + {len(remote_rules)} remote"
+            )
     return merged
 
 

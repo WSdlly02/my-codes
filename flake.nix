@@ -65,6 +65,8 @@
       system: with (pkgs' { inherit system; }); {
         devShells."${system}" = {
           default = callPackage ./Nix/devShells-default.nix { };
+          binEnv = callPackage ./Nix/devShells-binEnv.nix { };
+          binEnvWithRocm = callPackage ./Nix/devShells-binEnv.nix { enableRocmSupport = true; };
         };
         formatter."${system}" = nixfmt-tree;
         legacyPackages."${system}" = {

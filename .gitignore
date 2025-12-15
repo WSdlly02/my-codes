@@ -10,3 +10,5 @@
 .vscode
 result
 target
+.direnv
+.venv
