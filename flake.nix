@@ -14,6 +14,7 @@
         "x86_64-linux"
         "aarch64-linux"
       ];
+      # this function folds over all exposed systems and merges the results
       forExposedSystems = f: builtins.foldl' lib.recursiveUpdate { } (map f exposedSystems);
     in
     {

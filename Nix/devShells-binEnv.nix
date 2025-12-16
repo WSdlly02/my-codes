@@ -78,12 +78,11 @@ mkShell rec {
       udev
       zlib
       zstd
+      # pkgs here is runtime pkgs
+      ffmpeg
     ]
     ++ lib.optionals enableRocmSupport [
       rocmtoolkit_joined
-    ]
-    ++ [
-      ffmpeg
     ];
   shellHook = ''
     export LD_LIBRARY_PATH=${lib.makeLibraryPath packages}:$LD_LIBRARY_PATH
