@@ -19,6 +19,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@main # 或 endersonmenezes/free-disk-space@v3
+        with:
+          tool-cache: true # 删除GitHub Actions工具缓存 ~5GB+
+          android: true # 删除Android SDK ~10GB+
+          dotnet: true # 删除.NET ~10GB+
+          haskell: true # 删除Haskell
+          large-packages: true # 删除大包如azure-cli等
+          docker-images: false
+          swap-storage: true
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
