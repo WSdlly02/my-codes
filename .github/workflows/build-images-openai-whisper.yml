@@ -1,4 +1,4 @@
-name: Build and Push OCI Images
+name: Build and Push OpenAI Whisper Docker Images
 
 on:
   push:
@@ -46,11 +46,11 @@ jobs:
       - name: Lowercase repository name
         run: echo "REPO_LOWER=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      - name: Build and push openai-whsiper:rocm image
+      - name: Build and push openai-whisper:rocm image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: SOPs/openai-whisper/Dockerfile.openai-whsiper:rocm
+          file: SOPs/openai-whisper/Dockerfile.openai-whisper:rocm
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/openai-whisper:rocm
@@ -59,11 +59,11 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
-      - name: Build and push openai-whsiper:rocm image
+      - name: Build and push openai-whisper:cpu image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: SOPs/openai-whisper/Dockerfile.openai-whsiper:cpu
+          file: SOPs/openai-whisper/Dockerfile.openai-whisper:cpu
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/openai-whisper:cpu

@@ -1,7 +1,13 @@
-FROM python:3.14-slim-trixie
+FROM rocm/dev-ubuntu-24.04:6.4.4
+
+# 设置无头模式，防止 apt 安装时弹出交互问卷
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
   apt-get install -y --no-install-recommends \
+  python3 \
+  python3-venv \
+  python3-pip \
   ffmpeg \
   git && \
   rm -rf /var/lib/apt/lists/*
@@ -13,9 +19,8 @@ RUN python3 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # 预安装依赖
-# CPU 版本安装 CPU 优化的 torch
 RUN pip install --no-cache-dir --upgrade pip wheel && \
-  pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+  pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/rocm6.4 && \
   pip install --no-cache-dir openai-whisper
 
 # 移除硬编码的用户，以便在运行时通过 -u 参数动态指定
