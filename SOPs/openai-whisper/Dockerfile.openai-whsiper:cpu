@@ -1,0 +1,22 @@
+FROM python:3.14-slim-trixie
+
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+  ffmpeg \
+  git && \
+  rm -rf /var/lib/apt/lists/*
+
+# 巧妙的虚拟环境处理方式：
+# 将虚拟环境安装在 /opt 下，并直接修改 PATH，使其对所有用户可用
+ENV VIRTUAL_ENV=/opt/openai-whisper-env
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# 预安装依赖
+# CPU 版本安装 CPU 优化的 torch
+RUN pip install --no-cache-dir --upgrade pip wheel && \
+  pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+  pip install --no-cache-dir openai-whisper
+
+# 移除硬编码的用户，以便在运行时通过 -u 参数动态指定
+ENTRYPOINT [ "whisper" ]
