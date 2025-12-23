@@ -52,7 +52,7 @@ jobs:
       - name: Build and push openai-whisper:rocm image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./SOPs/openai-whisper
           file: SOPs/openai-whisper/Dockerfile.openai-whisper:rocm
           push: true
           tags: |
@@ -65,7 +65,7 @@ jobs:
       - name: Build and push openai-whisper:cpu image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./SOPs/openai-whisper
           file: SOPs/openai-whisper/Dockerfile.openai-whisper:cpu
           push: true
           tags: |

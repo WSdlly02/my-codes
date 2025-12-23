@@ -18,6 +18,7 @@ AVAHI_BROWSE_CMD = [
     "-r",
     "-t",
     "-p",
+    "-k",
 ]  # all, resolve, terminate, parsable
 
 
