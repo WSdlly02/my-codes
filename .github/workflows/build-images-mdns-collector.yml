@@ -41,7 +41,7 @@ jobs:
       - name: Build and push mdns-collector image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./SOPs/mdns-collector
           file: SOPs/mdns-collector/Dockerfile
           push: true
           tags: |
