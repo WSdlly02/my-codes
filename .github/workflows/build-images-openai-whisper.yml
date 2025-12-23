@@ -2,7 +2,10 @@ name: Build and Push OpenAI Whisper Docker Images
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
+    paths:
+      - "SOPs/openai-whisper/Dockerfile*"
   workflow_dispatch:
 
 env:
