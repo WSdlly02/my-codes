@@ -33,8 +33,8 @@ ONCE = os.environ.get("ONCE", "") == "1"
 AVAHI_BROWSE_CMD = ["avahi-browse", "-a", "-r", "-t", "-p", "-k"]
 
 # 解析前缀
-RESOLVED_PREFIX = "=;"
-REMOVED_PREFIX = "-;"
+RESOLVED_PREFIX = "="
+REMOVED_PREFIX = "-"
 
 
 def dprint(*a):
@@ -252,6 +252,11 @@ def main() -> None:
 
                 info = parse_line_parts(line)
                 if not info:
+                    continue
+
+                # 确保关键字段存在（防止 avahi 输出不完整导致 KeyError）
+                if "addr" not in info or "port" not in info:
+                    # dprint("Skipping incomplete info:", line)
                     continue
 
                 stype = str(info["type"])
