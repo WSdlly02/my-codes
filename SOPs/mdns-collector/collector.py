@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import time
+import socket
 from pathlib import Path
 from typing import Dict, List, Tuple
 from xml.sax.saxutils import escape
@@ -28,8 +29,8 @@ DEBUG = os.environ.get("DEBUG", "") == "1"
 ONCE = os.environ.get("ONCE", "") == "1"
 
 # 关键：-k 关闭 db lookup，确保 type 是 _http._tcp 这种真实类型
-# 移除 -t，改为持续监听模式
-AVAHI_BROWSE_CMD = ["avahi-browse", "-a", "-r", "-p", "-k"]
+# 使用 -t (terminate) 模式进行定期轮询
+AVAHI_BROWSE_CMD = ["avahi-browse", "-a", "-r", "-t", "-p", "-k"]
 
 # 解析前缀
 RESOLVED_PREFIX = "=;"
@@ -92,10 +93,11 @@ def sanitize_filename(s: str) -> str:
     return s[:160] if len(s) > 160 else s
 
 
-def load_config() -> Tuple[str, set, Dict[str, int], List[Dict[str, str]]]:
+def load_config() -> Tuple[int, str, set, Dict[str, int], List[Dict[str, str]]]:
     with CFG_PATH.open("rb") as f:
         cfg = tomllib.load(f)
 
+    interval = int(cfg.get("interval_seconds", 10))
     prefix = str(cfg.get("filename_prefix", "gen-"))
     allow_types = set(cfg.get("allow_types", []))
 
@@ -107,7 +109,7 @@ def load_config() -> Tuple[str, set, Dict[str, int], List[Dict[str, str]]]:
     for r in rewrites:
         if isinstance(r, dict) and "from" in r and "to" in r:
             rules.append({"from": str(r["from"]), "to": str(r["to"])})
-    return prefix, allow_types, port_map, rules
+    return interval, prefix, allow_types, port_map, rules
 
 
 def parse_line_parts(line: str) -> Dict[str, object] | None:
@@ -191,12 +193,27 @@ def atomic_write(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
+def test_connectivity(addr: str, port: int) -> bool:
+    """
+    尝试连接目标地址端口，验证服务是否存活。
+    防止 avahi 缓存了已死亡容器的记录。
+    """
+    try:
+        # timeout 设为 1 秒，避免阻塞太久
+        with socket.create_connection((addr, port), timeout=1.0):
+            return True
+    except OSError:
+        return False
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    prefix, allow_types, port_map, rewrite_rules = load_config()
+    interval, prefix, allow_types, port_map, rewrite_rules = load_config()
     dprint(
         "Loaded config:",
+        "interval",
+        interval,
         "prefix",
         prefix,
         "allow_types",
@@ -212,116 +229,98 @@ def main() -> None:
         f.unlink(missing_ok=True)
         dprint("startup cleanup:", f.name)
 
-    # 内存索引：(iface, proto, instance, type) -> filename
-    # 用于处理删除事件
-    active_services: Dict[Tuple[str, str, str, str], str] = {}
+    # 文件内容缓存：filename -> xml_content
+    # 用于避免重复写入未变更的文件
+    file_cache: Dict[str, str] = {}
 
     while not STOP:
+        start_ts = time.time()
         try:
-            # 启动 avahi-browse 进程，持续监听
-            dprint("Starting avahi-browse...")
-            process = subprocess.Popen(
-                AVAHI_BROWSE_CMD,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,  # 行缓冲
-            )
+            dprint("Polling avahi-browse...")
+            # 使用 -t 模式，run() 会等待命令结束并返回输出
+            out = run(AVAHI_BROWSE_CMD)
 
-            if process.stdout is None:
-                dprint("Failed to open stdout")
-                time.sleep(5)
-                continue
+            current_files = set()
 
-            for line in process.stdout:
+            for line in out.splitlines():
                 if STOP:
                     break
 
                 line = line.strip()
-                if not line:
-                    continue
-
-                # 只关心 =; 和 -;
-                if not (
-                    line.startswith(RESOLVED_PREFIX) or line.startswith(REMOVED_PREFIX)
-                ):
+                if not line.startswith(RESOLVED_PREFIX):
                     continue
 
                 info = parse_line_parts(line)
                 if not info:
                     continue
 
-                # 唯一标识符 key
-                # 注意：avahi-browse 输出的 instance 包含转义字符，我们用原始字符串做 key 更稳妥
-                # 或者统一用 unescaped 后的。这里用 info['instance'] (已 unescape)
-                # key = (iface, proto, instance, type)
-                srv_key = (
-                    str(info["iface"]),
-                    str(info["proto"]),
-                    str(info["instance"]),
-                    str(info["type"]),
+                stype = str(info["type"])
+                addr = str(info["addr"])
+                port = int(info["port"])  # type: ignore
+                instance = str(info["instance"])
+
+                # 过滤逻辑
+                if allow_types and stype not in allow_types:
+                    continue
+
+                # 端口映射检查
+                map_key = f"{addr}:{port}"
+                # 如果没有映射，则使用原始端口
+                host_port = port_map.get(map_key, port)
+
+                # === 关键：连通性测试 ===
+                # 只有能连通的服务才生成文件，防止静默死亡
+                if not test_connectivity(addr, host_port):
+                    dprint(f"Service unreachable: {instance} ({addr}:{host_port})")
+                    continue
+
+                # 生成文件名
+                txt = rewrite_txt(info["txt"], rewrite_rules)  # type: ignore
+                fname = (
+                    f"{prefix}"
+                    f"{sanitize_filename(instance)}-"
+                    f"{sanitize_filename(stype)}-"
+                    f"{sanitize_filename(addr)}-"
+                    f"{port}.service"
                 )
 
-                if info["prefix"] == RESOLVED_PREFIX:
-                    # === 新增/更新服务 ===
-                    stype = str(info["type"])
-                    addr = str(info["addr"])
-                    port = int(info["port"])  # type: ignore
+                # 生成 XML
+                xml = make_service_xml(instance, stype, host_port, txt)
 
-                    # 过滤逻辑
-                    if allow_types and stype not in allow_types:
-                        # dprint("skip type:", stype)
-                        continue
-
-                    # 端口映射检查
-                    map_key = f"{addr}:{port}"
-                    host_port = port_map.get(map_key)
-                    if host_port is None:
-                        # dprint("skip unmapped:", map_key)
-                        continue
-
-                    # 生成文件名
-                    instance = str(info["instance"])
-                    txt = rewrite_txt(info["txt"], rewrite_rules)  # type: ignore
-
-                    fname = (
-                        f"{prefix}"
-                        f"{sanitize_filename(instance)}-"
-                        f"{sanitize_filename(stype)}-"
-                        f"{sanitize_filename(addr)}-"
-                        f"{port}.service"
-                    )
-
-                    # 写入文件
-                    xml = make_service_xml(instance, stype, host_port, txt)
+                # 缓存检查：内容变了才写文件
+                if file_cache.get(fname) != xml:
                     atomic_write(OUT_DIR / fname, xml)
+                    file_cache[fname] = xml
+                    dprint("Updated:", fname, "->", host_port)
 
-                    # 更新索引
-                    active_services[srv_key] = fname
-                    dprint("Resolved:", fname, "->", host_port)
+                current_files.add(fname)
 
-                elif info["prefix"] == REMOVED_PREFIX:
-                    # === 删除服务 ===
-                    if srv_key in active_services:
-                        fname = active_services[srv_key]
-                        (OUT_DIR / fname).unlink(missing_ok=True)
-                        del active_services[srv_key]
-                        dprint("Removed:", fname)
-                    else:
-                        # dprint("Ignore unknown removal:", srv_key)
-                        pass
+            # 清理 stale (本轮未发现或不可达的服务)
+            # 同时清理缓存
+            stale_files = []
+            for f in OUT_DIR.glob(f"{prefix}*.service"):
+                if f.name not in current_files:
+                    f.unlink(missing_ok=True)
+                    stale_files.append(f.name)
+                    dprint("Removed stale:", f.name)
 
-            process.terminate()
-            process.wait()
+            for f in stale_files:
+                if f in file_cache:
+                    del file_cache[f]
 
         except Exception:
             import traceback
 
             traceback.print_exc()
-            time.sleep(5)
 
         if ONCE:
             break
+
+        # 睡眠直到下一个 interval
+        elapsed = time.time() - start_ts
+        to_sleep = max(0, interval - elapsed)
+        if to_sleep > 0:
+            time.sleep(to_sleep)
 
 
 if __name__ == "__main__":
