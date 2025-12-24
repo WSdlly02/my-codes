@@ -43,22 +43,45 @@ def run(cmd: List[str]) -> str:
     return subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT, timeout=5)
 
 
+# XML 1.0 不允许的大多数控制字符：0x00-0x1F（除 \t \n \r）以及 0x7F
+_XML_ILLEGAL = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
+
+
 def unescape_avahi_instance(s: str) -> str:
-    """
-    avahi-browse parsable 输出里会用 \032 表示空格。
+    r"""
+    avahi-browse parsable 输出里会用 \DDD 表示一个字节（这里的 DDD 是“十进制”编码）
+    典型例子：
+      \032 => ASCII 32 => 空格
+      \091 => ASCII 91 => '['
     有时你会看到 \\032（双反斜杠），这里都统一处理掉。
+
+    注意：这里绝对不能按八进制解析，否则 \032 会变成 0x1A（^Z），导致 XML invalid token。
     """
-    # 先把双反斜杠压成单反斜杠
+    # 把双反斜杠压成单反斜杠
     s = s.replace("\\\\", "\\")
 
-    # 替换 \DDD 八进制转义
+    # 替换 \DDD（十进制）转义
     def repl(m):
         try:
-            return chr(int(m.group(1), 8))
+            v = int(m.group(1), 10)  # 十进制！
+            if 0 <= v <= 255:
+                return chr(v)
+            return m.group(0)
         except Exception:
             return m.group(0)
 
-    return re.sub(r"\\([0-7]{3})", repl, s)
+    return re.sub(r"\\([0-9]{3})", repl, s)
+
+
+def xml_safe_text(s: str) -> str:
+    """
+    确保写入 XML 的文本是合法的（去掉非法控制字符）。
+    同时把多余空白压缩一下，避免名字变得怪。
+    """
+    s = unescape_avahi_instance(s)
+    s = _XML_ILLEGAL.sub(" ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 
 def sanitize_filename(s: str) -> str:
@@ -90,7 +113,6 @@ def parse_resolved_lines(output: str) -> List[dict]:
     """
     解析 =; 行格式：
     =;iface;proto;instance;type;domain;host;addr;port;["txt=..."]
-    你给的输出正是这种结构。
     """
     res = []
     for line in output.splitlines():
@@ -150,25 +172,29 @@ def rewrite_txt(txt: List[str], rules: List[Dict[str, str]]) -> List[str]:
 def make_service_xml(
     instance_name: str, stype: str, host_port: int, txt: List[str]
 ) -> str:
-    # 不写 host-name => 对外统一成宿主机的 .local
+    # 写 XML 前做净化，避免 invalid token
+    safe_name = xml_safe_text(instance_name)
+
     lines = [
         "<?xml version=\"1.0\" standalone='no'?><!--*-nxml-*-->",
         '<!DOCTYPE service-group SYSTEM "avahi-service.dtd">',
         "<service-group>",
-        f'  <name replace-wildcards="yes">{escape(instance_name)}</name>',
+        f'  <name replace-wildcards="yes">{escape(safe_name)}</name>',
         "  <service>",
         f"    <type>{escape(stype)}</type>",
         f"    <port>{host_port}</port>",
     ]
     for t in txt:
-        lines.append(f"    <txt-record>{escape(t)}</txt-record>")
+        safe_txt = xml_safe_text(t)
+        if safe_txt:
+            lines.append(f"    <txt-record>{escape(safe_txt)}</txt-record>")
     lines += ["  </service>", "</service-group>", ""]
     return "\n".join(lines)
 
 
 def atomic_write(path: Path, content: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content)
+    tmp.write_text(content, encoding="utf-8")
     tmp.replace(path)
 
 
@@ -234,7 +260,7 @@ def main() -> None:
                     f.unlink(missing_ok=True)
                     dprint("remove stale:", f.name)
 
-        except Exception as e:
+        except Exception:
             import traceback
 
             traceback.print_exc()
