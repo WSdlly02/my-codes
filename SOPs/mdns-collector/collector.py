@@ -241,9 +241,10 @@ def main() -> None:
 
         if ONCE:
             break
-        if STOP:
-            break
-        time.sleep(interval)
+        for _ in range(interval):
+            if STOP:
+                break
+            time.sleep(1)
 
 
 if __name__ == "__main__":
