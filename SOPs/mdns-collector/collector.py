@@ -28,10 +28,12 @@ DEBUG = os.environ.get("DEBUG", "") == "1"
 ONCE = os.environ.get("ONCE", "") == "1"
 
 # 关键：-k 关闭 db lookup，确保 type 是 _http._tcp 这种真实类型
-AVAHI_BROWSE_CMD = ["avahi-browse", "-a", "-r", "-t", "-p", "-k"]
+# 移除 -t，改为持续监听模式
+AVAHI_BROWSE_CMD = ["avahi-browse", "-a", "-r", "-p", "-k"]
 
-# 只处理 resolved 行
+# 解析前缀
 RESOLVED_PREFIX = "=;"
+REMOVED_PREFIX = "-;"
 
 
 def dprint(*a):
@@ -90,11 +92,10 @@ def sanitize_filename(s: str) -> str:
     return s[:160] if len(s) > 160 else s
 
 
-def load_config() -> Tuple[int, str, set, Dict[str, int], List[Dict[str, str]]]:
+def load_config() -> Tuple[str, set, Dict[str, int], List[Dict[str, str]]]:
     with CFG_PATH.open("rb") as f:
         cfg = tomllib.load(f)
 
-    interval = int(cfg.get("interval_seconds", 5))
     prefix = str(cfg.get("filename_prefix", "gen-"))
     allow_types = set(cfg.get("allow_types", []))
 
@@ -106,33 +107,38 @@ def load_config() -> Tuple[int, str, set, Dict[str, int], List[Dict[str, str]]]:
     for r in rewrites:
         if isinstance(r, dict) and "from" in r and "to" in r:
             rules.append({"from": str(r["from"]), "to": str(r["to"])})
-    return interval, prefix, allow_types, port_map, rules
+    return prefix, allow_types, port_map, rules
 
 
-def parse_resolved_lines(output: str) -> List[dict]:
+def parse_line_parts(line: str) -> Dict[str, object] | None:
     """
-    解析 =; 行格式：
-    =;iface;proto;instance;type;domain;host;addr;port;["txt=..."]
+    解析 avahi-browse -p 输出的行
+    格式：Prefix;iface;proto;instance;type;domain;host;addr;port;txt...
     """
-    res = []
-    for line in output.splitlines():
-        if not line.startswith(RESOLVED_PREFIX):
-            continue
-        parts = line.split(";")
-        if len(parts) < 9:
-            continue
+    parts = line.split(";")
+    if len(parts) < 6:
+        return None
 
-        iface = parts[1]
-        proto = parts[2]
-        instance_raw = parts[3]
-        stype = parts[4]
-        domain = parts[5]
-        host = parts[6]
-        addr = parts[7]
+    # 基础字段，Resolved 和 Removed 都有
+    # Removed 行通常没有 host/addr/port/txt，只有前 6 个字段有效
+    res: Dict[str, object] = {
+        "prefix": parts[0],
+        "iface": parts[1],
+        "proto": parts[2],
+        "instance_raw": parts[3],
+        "instance": unescape_avahi_instance(parts[3]),
+        "type": parts[4],
+        "domain": parts[5],
+    }
+
+    # 只有 Resolved 行才有详细信息
+    if res["prefix"] == RESOLVED_PREFIX and len(parts) >= 9:
+        res["host"] = parts[6]
+        res["addr"] = parts[7]
         try:
-            port = int(parts[8])
+            res["port"] = int(parts[8])
         except ValueError:
-            continue
+            res["port"] = 0
 
         txt: List[str] = []
         for r in parts[9:]:
@@ -141,21 +147,8 @@ def parse_resolved_lines(output: str) -> List[dict]:
                 txt.append(r[5:-1])
             elif r.startswith("txt="):
                 txt.append(r[4:].strip('"'))
+        res["txt"] = txt
 
-        res.append(
-            {
-                "iface": iface,
-                "proto": proto,
-                "instance_raw": instance_raw,
-                "instance": unescape_avahi_instance(instance_raw),
-                "type": stype,
-                "domain": domain,
-                "host": host,
-                "addr": addr,
-                "port": port,
-                "txt": txt,
-            }
-        )
     return res
 
 
@@ -201,11 +194,9 @@ def atomic_write(path: Path, content: str) -> None:
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    interval, prefix, allow_types, port_map, rewrite_rules = load_config()
+    prefix, allow_types, port_map, rewrite_rules = load_config()
     dprint(
         "Loaded config:",
-        "interval",
-        interval,
         "prefix",
         prefix,
         "allow_types",
@@ -216,61 +207,121 @@ def main() -> None:
         len(rewrite_rules),
     )
 
+    # 启动时先清理旧文件
+    for f in OUT_DIR.glob(f"{prefix}*.service"):
+        f.unlink(missing_ok=True)
+        dprint("startup cleanup:", f.name)
+
+    # 内存索引：(iface, proto, instance, type) -> filename
+    # 用于处理删除事件
+    active_services: Dict[Tuple[str, str, str, str], str] = {}
+
     while not STOP:
-        keep = set()
         try:
-            out = run(AVAHI_BROWSE_CMD)
-            services = parse_resolved_lines(out)
-            dprint("resolved services:", len(services))
+            # 启动 avahi-browse 进程，持续监听
+            dprint("Starting avahi-browse...")
+            process = subprocess.Popen(
+                AVAHI_BROWSE_CMD,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # 行缓冲
+            )
 
-            for s in services:
-                stype = s["type"]
-                key = f'{s["addr"]}:{s["port"]}'
+            if process.stdout is None:
+                dprint("Failed to open stdout")
+                time.sleep(5)
+                continue
 
-                if allow_types and stype not in allow_types:
-                    dprint("skip type:", stype, "instance:", s["instance"], "key:", key)
+            for line in process.stdout:
+                if STOP:
+                    break
+
+                line = line.strip()
+                if not line:
                     continue
 
-                host_port = port_map.get(key)
-                if host_port is None:
-                    dprint(
-                        "skip unmapped:", stype, "instance:", s["instance"], "key:", key
-                    )
+                # 只关心 =; 和 -;
+                if not (
+                    line.startswith(RESOLVED_PREFIX) or line.startswith(REMOVED_PREFIX)
+                ):
                     continue
 
-                instance = s["instance"]
-                txt = rewrite_txt(s["txt"], rewrite_rules)
+                info = parse_line_parts(line)
+                if not info:
+                    continue
 
-                fname = (
-                    f"{prefix}"
-                    f"{sanitize_filename(instance)}-"
-                    f"{sanitize_filename(stype)}-"
-                    f"{sanitize_filename(s['addr'])}-"
-                    f"{s['port']}.service"
+                # 唯一标识符 key
+                # 注意：avahi-browse 输出的 instance 包含转义字符，我们用原始字符串做 key 更稳妥
+                # 或者统一用 unescaped 后的。这里用 info['instance'] (已 unescape)
+                # key = (iface, proto, instance, type)
+                srv_key = (
+                    str(info["iface"]),
+                    str(info["proto"]),
+                    str(info["instance"]),
+                    str(info["type"]),
                 )
-                keep.add(fname)
 
-                xml = make_service_xml(instance, stype, host_port, txt)
-                atomic_write(OUT_DIR / fname, xml)
-                dprint("emit:", fname, "->", host_port)
+                if info["prefix"] == RESOLVED_PREFIX:
+                    # === 新增/更新服务 ===
+                    stype = str(info["type"])
+                    addr = str(info["addr"])
+                    port = int(info["port"])  # type: ignore
 
-            # 清理 stale
-            for f in OUT_DIR.glob(f"{prefix}*.service"):
-                if f.name not in keep:
-                    f.unlink(missing_ok=True)
-                    dprint("remove stale:", f.name)
+                    # 过滤逻辑
+                    if allow_types and stype not in allow_types:
+                        # dprint("skip type:", stype)
+                        continue
+
+                    # 端口映射检查
+                    map_key = f"{addr}:{port}"
+                    host_port = port_map.get(map_key)
+                    if host_port is None:
+                        # dprint("skip unmapped:", map_key)
+                        continue
+
+                    # 生成文件名
+                    instance = str(info["instance"])
+                    txt = rewrite_txt(info["txt"], rewrite_rules)  # type: ignore
+
+                    fname = (
+                        f"{prefix}"
+                        f"{sanitize_filename(instance)}-"
+                        f"{sanitize_filename(stype)}-"
+                        f"{sanitize_filename(addr)}-"
+                        f"{port}.service"
+                    )
+
+                    # 写入文件
+                    xml = make_service_xml(instance, stype, host_port, txt)
+                    atomic_write(OUT_DIR / fname, xml)
+
+                    # 更新索引
+                    active_services[srv_key] = fname
+                    dprint("Resolved:", fname, "->", host_port)
+
+                elif info["prefix"] == REMOVED_PREFIX:
+                    # === 删除服务 ===
+                    if srv_key in active_services:
+                        fname = active_services[srv_key]
+                        (OUT_DIR / fname).unlink(missing_ok=True)
+                        del active_services[srv_key]
+                        dprint("Removed:", fname)
+                    else:
+                        # dprint("Ignore unknown removal:", srv_key)
+                        pass
+
+            process.terminate()
+            process.wait()
 
         except Exception:
             import traceback
 
             traceback.print_exc()
+            time.sleep(5)
 
         if ONCE:
             break
-        for _ in range(interval):
-            if STOP:
-                break
-            time.sleep(1)
 
 
 if __name__ == "__main__":
