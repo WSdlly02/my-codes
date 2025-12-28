@@ -8,6 +8,7 @@
 
 *.o
 *.hi
+*.env
 .vscode
 result
 target
