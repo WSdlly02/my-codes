@@ -28,11 +28,11 @@ def main():
     # 获取当前脚本所在目录，以便定位其他脚本
     # 假设脚本都在各自的 SOPs 子目录下，或者用户在特定目录下运行
     # 根据 workspace 结构：
-    # SOPs/pdf-process/dump-pdf-to-imgs.py
+    # SOPs/pdf-process/pdf-to-imgs.py
     # SOPs/localllm/batch-ocr.py
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    pdf_to_imgs_script = os.path.join(base_dir, "pdf-process", "dump-pdf-to-imgs.py")
+    pdf_to_imgs_script = os.path.join(base_dir, "pdf-process", "pdf-to-imgs.py")
     batch_ocr_script = os.path.join(base_dir, "localllm", "batch-ocr.py")
     # 1. 查找所有 PDF 文件
     pdf_files = [f for f in os.listdir(args.dir_path) if f.lower().endswith(".pdf")]
@@ -52,7 +52,7 @@ def main():
         print(f"\n{'='*60}")
         print(f"[Step 1] 正在转换 PDF 为图片: {pdf_file}")
 
-        # 调用 dump-pdf-to-imgs.py
+        # 调用 pdf-to-imgs.py
         try:
             subprocess.run(
                 [
