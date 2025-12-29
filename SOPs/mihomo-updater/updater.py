@@ -88,7 +88,7 @@ def save_yaml(data, path: Path) -> None:
 
 
 def restart_service():
-    cmd = ["systemctl", "restart", SERVICE_NAME]
+    cmd = ["sudo", "systemctl", "restart", SERVICE_NAME]
     print(f"[service] 重启服务: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
 
@@ -138,8 +138,8 @@ def main():
 
     # 4. 保存备份
     if LOCAL_CONFIG.exists():
-        ts = datetime.now().strftime("%Y%m%d%H%M")
-        backup_path = MIHOMO_DIR / "backup" / f"config.bak.{ts}"
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_path = MIHOMO_DIR / "backup" / f"config.yaml.bak.{ts}"
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         LOCAL_CONFIG.rename(backup_path)
 
