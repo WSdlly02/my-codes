@@ -4,7 +4,7 @@
 IMAGE_NAME="openai-whisper:rocm"
 # 获取 Dockerfile 的绝对路径
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DOCKERFILE="$SCRIPT_DIR/Dockerfile.openai-whsiper:rocm"
+DOCKERFILE="$SCRIPT_DIR/Dockerfile.openai-whisper:rocm"
 
 # 如果镜像不存在，则自动构建
 if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
