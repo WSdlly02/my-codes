@@ -9,6 +9,8 @@
 *.o
 *.hi
 *.env
+*.pyc
+__pycache__/
 .vscode
 result
 target

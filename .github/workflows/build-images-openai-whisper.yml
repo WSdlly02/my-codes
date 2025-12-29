@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "SOPs/openai-whisper/Dockerfile*"
+      - "SOPs/audio-process/Dockerfile*"
   workflow_dispatch:
 
 env:
@@ -52,8 +52,8 @@ jobs:
       - name: Build and push openai-whisper:rocm image
         uses: docker/build-push-action@v5
         with:
-          context: ./SOPs/openai-whisper
-          file: SOPs/openai-whisper/Dockerfile.openai-whisper:rocm
+          context: ./SOPs/audio-process
+          file: SOPs/audio-process/Dockerfile.openai-whisper:rocm
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/openai-whisper:rocm
@@ -65,8 +65,8 @@ jobs:
       - name: Build and push openai-whisper:cpu image
         uses: docker/build-push-action@v5
         with:
-          context: ./SOPs/openai-whisper
-          file: SOPs/openai-whisper/Dockerfile.openai-whisper:cpu
+          context: ./SOPs/audio-process
+          file: SOPs/audio-process/Dockerfile.openai-whisper:cpu
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/openai-whisper:cpu
