@@ -16,7 +16,7 @@ if API_KEY is None:
     raise EnvironmentError("未找到 GEMINI_API_KEY，请在 .env 文件中设置。")
 MODEL_NAME = "gemini-3-pro-preview"
 INPUT_FOLDER = "/home/wsdlly02/Disks/Files/Files/College/录音整理/audio_files"
-OUTPUT_FOLDER = Path(INPUT_FOLDER) / "transcripts_gemini"
+OUTPUT_FOLDER = Path(INPUT_FOLDER) / "transcripts_genai"
 CHUNK_MINUTES = 10  # 每个分片 10 分钟
 # ===========================================
 

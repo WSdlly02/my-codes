@@ -5,7 +5,7 @@ import argparse
 import subprocess
 import base64
 from urllib.parse import unquote
-from core import generate_ocr_stream, DEFAULT_PROMPT_MAP
+from ocrcore import generate_ocr_stream_local, DEFAULT_PROMPT_MAP
 
 
 def encode_image_from_path(image_path) -> str:
@@ -101,7 +101,7 @@ def main():
 
     full_text = ""
     try:
-        for content in generate_ocr_stream(base64_image, args.prompt_style):
+        for content in generate_ocr_stream_local(base64_image, args.prompt_style):
             print(content, end="", flush=True)
             full_text += content
 

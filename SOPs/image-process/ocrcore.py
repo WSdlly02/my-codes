@@ -13,7 +13,7 @@ DEFAULT_PROMPT_MAP = {
 }
 
 
-def generate_ocr_stream(
+def generate_ocr_stream_local(
     base64_image, prompt_style="t", custom_prompt="", model="qwen3-vl:8b"
 ):
     """
@@ -49,3 +49,9 @@ def generate_ocr_stream(
                     break
     except Exception as e:
         raise e
+
+
+def generate_ocr_stream_genai(
+    base64_image, prompt_style="t", custom_prompt="", model="gemini-3-flash-preview"
+):
+    return 0

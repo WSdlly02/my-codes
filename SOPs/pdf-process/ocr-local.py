@@ -28,12 +28,12 @@ def main():
     # 获取当前脚本所在目录，以便定位其他脚本
     # 假设脚本都在各自的 SOPs 子目录下，或者用户在特定目录下运行
     # 根据 workspace 结构：
-    # SOPs/pdf-process/pdf-to-imgs.py
-    # SOPs/localllm/batch-ocr.py
+    # SOPs/pdf-process/export-imgs.py
+    # SOPs/image-process/ocr-local.py
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    pdf_to_imgs_script = os.path.join(base_dir, "pdf-process", "pdf-to-imgs.py")
-    batch_ocr_script = os.path.join(base_dir, "localllm", "batch-ocr.py")
+    export_imgs_script = os.path.join(base_dir, "pdf-process", "export-imgs.py")
+    batch_ocr_script = os.path.join(base_dir, "image-process", "ocr-local.py")
     # 1. 查找所有 PDF 文件
     pdf_files = [f for f in os.listdir(args.dir_path) if f.lower().endswith(".pdf")]
     pdf_files.sort()
@@ -57,7 +57,7 @@ def main():
             subprocess.run(
                 [
                     sys.executable,
-                    pdf_to_imgs_script,
+                    export_imgs_script,
                     pdf_path,
                     "-o",
                     output_img_dir,
@@ -65,7 +65,7 @@ def main():
                     str(args.dpi),
                 ],
                 check=True,
-                cwd=os.path.dirname(pdf_to_imgs_script),
+                cwd=os.path.dirname(export_imgs_script),
             )
         except subprocess.CalledProcessError as e:
             print(f"[Error] PDF 转换失败: {pdf_file}, 错误: {e}")
@@ -73,8 +73,8 @@ def main():
 
         print(f"[Step 2] 正在对图片进行批量 OCR: {output_img_dir}")
 
-        # 调用 batch-ocr.py
-        # batch-ocr.py 默认在图片目录下生成 ocr_results.md
+        # 调用 ocr-local.py
+        # ocr-local.py 默认在图片目录下生成 ocr_results.md
         try:
             subprocess.run(
                 [

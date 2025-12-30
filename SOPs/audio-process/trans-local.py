@@ -7,7 +7,7 @@ from pathlib import Path
 
 # ================= 配置区域 =================
 INPUT_FOLDER = "/home/wsdlly02/Disks/Files/Files/College/录音整理/audio_files"
-OUTPUT_FOLDER_RELATIVE = "transcripts"
+OUTPUT_FOLDER_RELATIVE = "transcripts_local"
 OUTPUT_FOLDER = Path(INPUT_FOLDER) / OUTPUT_FOLDER_RELATIVE
 SUPPORTED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".flac", ".mkv"}
 MODEL = "large-v3-turbo"

@@ -3,7 +3,7 @@
 import os
 import argparse
 import base64
-from core import generate_ocr_stream, DEFAULT_PROMPT_MAP
+from ocrcore import generate_ocr_stream_local, DEFAULT_PROMPT_MAP
 
 
 def encode_image_from_path(image_path) -> str:
@@ -70,7 +70,7 @@ def main():
                 base64_image = encode_image_from_path(full_path)
 
                 full_text = ""
-                for content in generate_ocr_stream(
+                for content in generate_ocr_stream_local(
                     base64_image,
                     args.prompt_style,
                     model="qwen3-vl:4b",  # 使用更小的模型
