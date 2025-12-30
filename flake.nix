@@ -71,12 +71,10 @@
         };
         formatter."${system}" = nixfmt-tree;
         legacyPackages."${system}" = {
-          # Packages here won't be exposed and used as a library
-          inC = callPackage ./Nix/pkgs/language-specific/inC.nix { };
-          inHaskell = callPackage ./Nix/pkgs/language-specific/inHaskell.nix { };
-          inPython = callPackage ./Nix/pkgs/language-specific/inPython.nix { };
-          inRust = callPackage ./Nix/pkgs/language-specific/inRust.nix { };
+          # Packages here won't be exposed and used as a library in other parts of the flake
+
           exposedPackages = {
+            # Packages here will be exposed and used as libraries in other parts of the flake
             audio-relay = callPackage ./Nix/pkgs/audio-relay.nix { };
             ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
@@ -89,7 +87,9 @@
             python3Env = python3Packages.callPackage ./Nix/pkgs/python3Env.nix { };
             python3FHSEnv = callPackage ./Nix/pkgs/python3FHSEnv.nix { };
           };
-          libraryPackages = { };
+          libraryPackages = {
+            # Packages here will be used as library but won't be exposed
+          };
         };
       }
     );
