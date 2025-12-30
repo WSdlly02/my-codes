@@ -8,6 +8,8 @@ import socketserver
 import urllib.request
 import urllib.parse
 import yaml
+import signal
+import sys
 
 # ==========================================
 #              1. 配置区域
@@ -199,8 +201,17 @@ def run_server():
     # Allow reuse address to avoid "Address already in use" errors during restarts
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", PORT), ConfigHandler) as httpd:
+        # 注册信号处理，确保 SIGTERM 能触发 SystemExit
+        # SIGINT (Ctrl+C) 默认会抛出 KeyboardInterrupt
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
+
         print(f"Serving at port {PORT}")
-        httpd.serve_forever()
+        try:
+            httpd.serve_forever()
+        except (KeyboardInterrupt, SystemExit):
+            print("\n正在停止服务器...")
+        finally:
+            print("服务器已关闭。")
 
 
 if __name__ == "__main__":
