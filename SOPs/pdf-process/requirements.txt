@@ -2,3 +2,4 @@ python-dotenv
 requests
 pymupdf
 google-genai
+pillow

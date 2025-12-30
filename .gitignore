@@ -11,8 +11,11 @@
 *.env
 *.pyc
 __pycache__/
-.vscode
-result
-target
-.direnv
-.venv
+.vscode/
+result/
+target/
+.direnv/
+.venv/
+# 忽略生成的 PDF 文件和下载的图片
+SOPs/pdf-process/*.pdf
+SOPs/pdf-process/downloaded_images/
