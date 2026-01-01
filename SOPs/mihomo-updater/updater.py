@@ -13,6 +13,7 @@ import yaml
 
 MIHOMO_DIR = Path("/home/wsdlly02/.config/mihomo")
 LOCAL_CONFIG = MIHOMO_DIR / "config.yaml"
+BACKUP_CONFIG = Path("/home/wsdlly02/Disks/Files/mihomo-config.yaml")
 SERVICE_NAME = "mihomo.service"
 
 # Resolver 地址
@@ -87,7 +88,7 @@ def save_yaml(data, path: Path) -> None:
         )
 
 
-def restart_service():
+def restart_service() -> None:
     cmd = ["sudo", "systemctl", "restart", SERVICE_NAME]
     print(f"[service] 重启服务: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
@@ -109,7 +110,7 @@ def main():
 
     if not remote_data:
         print("❌ 无法获取远程配置，终止更新")
-        return
+        raise SystemExit(1)
 
     # 2. 读取本地配置
     local_data = load_yaml(LOCAL_CONFIG)
@@ -118,20 +119,13 @@ def main():
     merged_data = dict(local_data)
 
     # 更新 proxies, proxy-groups, rules
-    if "proxies" in remote_data:
+    try:
+        print(f"[merge] 开始合并配置...")
         merged_data["proxies"] = remote_data["proxies"]
-    else:
-        print("❌ 远程配置缺少 proxies，终止更新")
-        raise SystemExit(1)
-    if "proxy-groups" in remote_data:
         merged_data["proxy-groups"] = remote_data["proxy-groups"]
-    else:
-        print("❌ 远程配置缺少 proxy-groups，终止更新")
-        raise SystemExit(1)
-    if "rules" in remote_data:
         merged_data["rules"] = remote_data["rules"]
-    else:
-        print("❌ 远程配置缺少 rules，终止更新")
+    except Exception as e:
+        print(f"❌ 配置合并失败: {e}")
         raise SystemExit(1)
 
     print(f"[merge] 配置合并完成")
@@ -144,8 +138,13 @@ def main():
         LOCAL_CONFIG.rename(backup_path)
 
     # 5. 保存新配置
-    save_yaml(merged_data, LOCAL_CONFIG)
-    print("✅ 配置文件已生成")
+    try:
+        save_yaml(merged_data, LOCAL_CONFIG)
+        save_yaml(merged_data, BACKUP_CONFIG)
+    except Exception as e:
+        print(f"❌ 配置保存失败: {e}")
+        raise SystemExit(1)
+    print("✅ 配置文件、备份保存完成")
 
     # 6. 数据库更新
     print("[db] 检查数据库更新...")
@@ -153,7 +152,8 @@ def main():
         dst = MIHOMO_DIR / cfg["filename"]
         try:
             download_data(cfg["url"], dst)
-        except:
+        except Exception as e:
+            print(f"⚠️ 数据库 {key} 更新失败: {e}，跳过")
             pass
 
     # 7. 重启服务
@@ -162,6 +162,7 @@ def main():
         restart_service()
     except Exception as e:
         print(f"⚠️ 服务重启失败: {e}")
+        raise SystemExit(1)
 
     print("=== 完成 ===")
 

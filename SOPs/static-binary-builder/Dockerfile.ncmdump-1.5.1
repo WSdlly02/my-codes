@@ -1,0 +1,46 @@
+FROM alpine:latest
+
+# 安装必要工具和静态依赖
+RUN apk add --no-cache \
+  git \
+  cmake \
+  make \
+  g++ \
+  musl-dev \
+  zlib-dev \
+  zlib-static \
+  # TagLib 依赖 utfcpp
+  utfcpp && \
+  rm -rf /var/lib/apk/lists/* /var/cache/apk/*
+
+WORKDIR /src
+
+# 1. 固定版本编译静态 TagLib v2.1.1
+RUN git clone https://github.com/taglib/taglib.git && \
+  cd taglib && \
+  git checkout v2.1.1 && \
+  mkdir build && cd build && \
+  cmake .. \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=OFF && \
+  make -j$(nproc) && \
+  make install && \
+  # 清理源码，减小层体积
+  cd /src && rm -rf taglib
+
+# 2. 固定版本编译 ncmdump v1.5.1，并生成完全静态 static-pie 二进制
+RUN git clone https://github.com/taurusxin/ncmdump.git && \
+  cd ncmdump && \
+  git checkout 1.5.1 && \
+  mkdir build && cd build && \
+  cmake .. \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_EXE_LINKER_FLAGS="-static" \
+  -DZLIB_LIBRARY=/usr/lib/libz.a \
+  -DZLIB_INCLUDE_DIR=/usr/include && \
+  make -j$(nproc) && \
+  # 去除符号表，减小二进制体积
+  strip --strip-all ncmdump
+
+CMD ["cp", "/src/ncmdump/build/ncmdump", "/output/ncmdump-static"]
+# Usage: docker run --rm -v $(pwd)/output:/output ncmdump-1.5.1
