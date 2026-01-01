@@ -12,7 +12,6 @@ stdenv.mkDerivation rec {
     owner = "taurusxin";
     repo = pname;
     rev = version;
-    fetchSubmodules = true;
     hash = "sha256-OU5jfZj/2S2bVyguPfvGH2DR5ZgszH6mSbJiQgrhGU8=";
   };
   buildInputs = [
@@ -20,7 +19,4 @@ stdenv.mkDerivation rec {
     zlib
   ];
   nativeBuildInputs = [ cmake ];
-  cmakeFlags = [
-    "-DCMAKE_BUILD_TYPE=Release"
-  ];
 }
