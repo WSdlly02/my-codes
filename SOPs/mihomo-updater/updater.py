@@ -3,7 +3,6 @@
 
 import subprocess
 import urllib.request
-import urllib.error
 from pathlib import Path
 from datetime import datetime
 import yaml
@@ -61,13 +60,11 @@ def download_data(url: str, dst: Path, timeout=30) -> None:
 def fetch_config(url: str, timeout=30):
     headers = {"User-Agent": "Clash/Meta"}
     req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            if resp.status != 200:
-                raise Exception(f"HTTP 错误: {resp.status}")
-        return resp.read()
-    except urllib.error.URLError as e:
-        raise Exception(f"网络连接失败: {e.reason}")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        if resp.status != 200:
+            raise Exception(f"HTTP 错误: {resp.status}")
+        data = resp.read()
+        return yaml.safe_load(data)
 
 
 def save_yaml(data, path: Path) -> None:

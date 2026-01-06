@@ -8,7 +8,6 @@ import http.server
 import socketserver
 import urllib.request
 import urllib.parse
-import urllib.error
 import yaml
 import signal
 import sys
@@ -33,6 +32,10 @@ try:
     ORIGIN_CONFIG_PATH = Path(get_env_variable("ORIGIN_CONFIG_PATH"))
     SUBCONVERTER_HOST = get_env_variable("SUBCONVERTER_HOST", "http://127.0.0.1:25500")
     PORT = int(get_env_variable("RESOLVER_PORT", "8088"))
+    RULES_URL = get_env_variable(
+        "RULES_URL",
+        "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_Full.ini",
+    )
 
     # VPS 配置
     JP_BYTEVIRT_VPS_NAME = "🇯🇵 日本 ByteVirt VPS"
@@ -41,12 +44,9 @@ try:
     JP_BYTEVIRT_VPS_PORT = int(get_env_variable("JP_BYTEVIRT_VPS_PORT"))
     JP_BYTEVIRT_VPS_PUBKEY = get_env_variable("JP_BYTEVIRT_VPS_PUBKEY")
     JP_BYTEVIRT_VPS_DOMAIN = get_env_variable("JP_BYTEVIRT_VPS_DOMAIN")
-except (EnvironmentError, ValueError) as e:
+except Exception as e:
     print(f"配置文件错误: {e}")
     raise SystemExit(1)
-
-# 规则模板
-RULES_URL = "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_Full.ini"
 
 # 【自定义代理区】直接写 Clash Meta 格式的字典
 CUSTOM_PROXY = [
@@ -107,13 +107,10 @@ def build_subconverter_url() -> str:
 def fetch_url(url, timeout=30):
     headers = {"User-Agent": "Clash/Meta"}
     req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            if resp.status != 200:
-                raise Exception(f"HTTP 错误: {resp.status}")
-            return resp.read()
-    except urllib.error.URLError as e:
-        raise Exception(f"网络连接失败: {e.reason}")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        if resp.status != 200:
+            raise Exception(f"HTTP 错误: {resp.status}")
+        return resp.read()
 
 
 def generate_config() -> dict:
