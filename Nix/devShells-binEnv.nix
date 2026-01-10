@@ -80,6 +80,9 @@ mkShell rec {
       zstd
       # pkgs here is runtime pkgs
       ffmpeg
+      go
+      nodejs
+      npm-check-updates
     ]
     ++ lib.optionals enableRocmSupport [
       rocmtoolkit_joined
