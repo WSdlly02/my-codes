@@ -64,8 +64,8 @@
     }
     // forExposedSystems (
       system: with (pkgs' { inherit system; }); {
-        devShells."${system}" = {
-          default = callPackage ./Nix/devShells-default.nix { };
+        devShells."${system}" = rec {
+          default = binEnv;
           binEnv = callPackage ./Nix/devShells-binEnv.nix { };
           binEnvWithRocm = callPackage ./Nix/devShells-binEnv.nix { enableRocmSupport = true; };
         };

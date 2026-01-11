@@ -10,6 +10,7 @@ import urllib.request
 import urllib.parse
 import yaml
 import signal
+import socket
 import sys
 
 # ==========================================
@@ -175,13 +176,26 @@ def load_yaml(path: Path) -> dict:
 
 
 class ConfigHandler(http.server.BaseHTTPRequestHandler):
-    def send_error_response(self, code, message):
+    def send_error_response(self, code: int, message: str):
         self.send_response(code)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(message.encode("utf-8"))
 
     def do_GET(self):
+        # access control
+        # if self.client_address != ("127.0.0.1", 8088):
+        #     self.send_error_response(403, "Forbidden")
+        #     return
+
+        # Validate User-Agent
+        if not any(
+            agent in self.headers.get("User-Agent", "")
+            for agent in ["Clash", "ClashMeta", "mihomo"]
+        ):
+            self.send_error_response(403, "Forbidden: Invalid User-Agent")
+            return
+
         try:
             match self.path:
                 case "/health":
@@ -238,7 +252,8 @@ class ConfigHandler(http.server.BaseHTTPRequestHandler):
 def run_server():
     # Allow reuse address to avoid "Address already in use" errors during restarts
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", PORT), ConfigHandler) as httpd:
+    socketserver.TCPServer.address_family = socket.AF_INET6
+    with socketserver.TCPServer(("::", PORT), ConfigHandler) as httpd:
         # 注册信号处理，确保 SIGTERM 能触发 SystemExit
         # SIGINT (Ctrl+C) 默认会抛出 KeyboardInterrupt
         signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
