@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -304,26 +305,41 @@ func validateUserAgent(r *http.Request) bool {
 func main() {
 	loadConfig()
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
 	})
-	http.HandleFunc("/config/minimal", handleMinimal)
-	http.HandleFunc("/config/full", handleFull)
+	mux.HandleFunc("/config/minimal", handleMinimal)
+	mux.HandleFunc("/config/full", handleFull)
+	srv := &http.Server{
+		Addr:         ":" + Port,
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}
 
-	log.Printf("Serving at port %s", Port)
-
-	srv := &http.Server{Addr: "[::]:" + Port} // Listen on IPv6/IPv4
+	blockCtx, cancelBlockCtx := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
+	defer cancelBlockCtx()
 
 	go func() {
-		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+		log.Printf("Server listening on :%s (IPv4 + IPv6)", Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("HTTP server failed: %v", err)
 		}
 	}()
 
-	// Graceful shutdown
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
+	<-blockCtx.Done() // Block main thread until signal received
+	log.Println("Received shutdown signal, shutting down...")
 
-	log.Println("Shutting down...")
+	shutdownCtx, cancelShutdownCtx := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdownCtx()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Graceful shutdown failed: %v", err)
+		os.Exit(1)
+	}
+
+	log.Println("Server stopped")
 }

@@ -4,7 +4,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-RUN GOAMD64=v3 CGO_ENABLED=0 go build -o resolver .
+RUN GOAMD64=v3 CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o resolver .
 
 FROM alpine:latest
 
