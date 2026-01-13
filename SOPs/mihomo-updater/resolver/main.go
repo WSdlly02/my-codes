@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -89,8 +90,7 @@ func getEnvWithFatal(key string, defaultVal ...string) string {
 }
 
 func strToIntWithFatal(s string) int {
-	var i int
-	_, err := fmt.Sscanf(s, "%d", &i)
+	i, err := strconv.Atoi(s)
 	if err != nil {
 		log.Fatalf("Failed to parse port: %v", err)
 	}
@@ -235,6 +235,7 @@ func generateConfig() ([]byte, error) {
 	fullFilter := strings.Join(filterParts, " | ")
 
 	return runYq(data, fullFilter, "-")
+	// pass data as stdin ("-")
 }
 
 func handleMinimal(w http.ResponseWriter, r *http.Request) {
@@ -242,6 +243,7 @@ func handleMinimal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
+	log.Printf("Handling minimal config request from %s", r.RemoteAddr)
 
 	config, err := generateConfig()
 	if err != nil {
@@ -259,6 +261,7 @@ func handleFull(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
+	log.Printf("Handling full config request from %s", r.RemoteAddr)
 
 	generatedConfig, err := generateConfig()
 	if err != nil {
@@ -278,7 +281,7 @@ func handleFull(w http.ResponseWriter, r *http.Request) {
 	filter := `select(fileIndex == 0) as $origin | select(fileIndex == 1) as $gen | $origin | .proxies = $gen.proxies | .["proxy-groups"] = $gen.["proxy-groups"] | .rules = $gen.rules`
 
 	merged, err := runYq(generatedConfig, filter, OriginConfigPath, "-")
-	// Note: We pass generatedConfig as stdin ("-"), and OriginConfigPath as first arg.
+	// pass generatedConfig as stdin ("-"), and OriginConfigPath as first arg.
 	// So fileIndex 0 is OriginConfigPath, fileIndex 1 is stdin.
 
 	if err != nil {
