@@ -76,6 +76,7 @@
           exposedPackages = {
             # Packages here will be exposed and used as libraries in other parts of the flake
             audio-relay = callPackage ./Nix/pkgs/audio-relay.nix { };
+            mihomo-updater-updater = callPackage ./Nix/pkgs/mihomo-updater-updater.nix { };
             ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
             qoder = callPackage ./Nix/pkgs/qoder.nix { };
