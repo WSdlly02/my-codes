@@ -322,26 +322,42 @@ func main() {
 		IdleTimeout:  30 * time.Second,
 	}
 
-	blockCtx, cancelBlockCtx := signal.NotifyContext(context.Background(),
-		os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
-	defer cancelBlockCtx()
+	signalCtx, stopSignal := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+		syscall.SIGQUIT,
+	)
+	defer stopSignal()
+
+	serverErr := make(chan error, 1)
 
 	go func() {
 		log.Printf("Server listening on :%s (IPv4 + IPv6)", Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server failed: %v", err)
+		err := srv.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
+			serverErr <- err
 		}
+		close(serverErr)
 	}()
 
-	<-blockCtx.Done() // Block main thread until signal received
-	log.Println("Received shutdown signal, shutting down...")
+	select {
+	case <-signalCtx.Done():
+		log.Println("Shutting down server... (signal received)")
+	case err := <-serverErr:
+		if err != nil {
+			log.Printf("SERVER FATAL ERROR: %v\n", err)
+			log.Println("Shutting down server... (error received)")
+		}
+	}
 
-	shutdownCtx, cancelShutdownCtx := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelShutdownCtx()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Graceful shutdown failed: %v", err)
-		os.Exit(1)
+		log.Fatalf("Server forced to shutdown: %v\n", err)
+	} else {
+		log.Println("Server shutdown completed gracefully")
 	}
 
 	log.Println("Server stopped")

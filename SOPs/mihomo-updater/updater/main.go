@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -203,14 +204,30 @@ func main() {
 	}
 	fmt.Println("✅ Config and backup saved")
 
-	// 4. Update Databases
+	// 4. Update Databases, use goroutine for parallel downloads
 	fmt.Println("[db] Checking for database updates...")
-	for key, cfg := range DBSources {
-		dst := filepath.Join(MihomoDir, cfg.Filename)
-		if err := downloadData(cfg.URL, dst, 30*time.Second); err != nil {
-			fmt.Printf("⚠️ Database %s update failed: %v, skipping\n", key, err)
+	errCh := make(chan error, len(DBSources))
+	var wg sync.WaitGroup
+
+	for _, cfg := range DBSources {
+		wg.Go(func() {
+			dst := filepath.Join(MihomoDir, cfg.Filename)
+			err := downloadData(cfg.URL, dst, 30*time.Second)
+			errCh <- err
+		})
+	}
+
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+
+	for err := range errCh {
+		if err != nil {
+			fmt.Printf("⚠️ Error during database update: %v\n", err)
 		}
 	}
+	fmt.Println("所有数据库更新完成")
 
 	// 5. Restart Service
 	fmt.Println("[service] Restarting Mihomo Service...")
