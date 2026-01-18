@@ -16,13 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/joho/godotenv"
 )
-
-func init() {
-	_ = godotenv.Load()
-}
 
 type VpsConfig struct {
 	Name      string
@@ -37,29 +31,32 @@ type VpsConfig struct {
 var (
 	AirportURL       string
 	OriginConfigPath string
+	// Configs here have default values
 	SubconverterHost string
 	Port             string
 	RulesURL         string
-	CustomProxies    []VpsConfig
-	CustomRules      []string
-	AutoGroupMap     map[string][]string
+	// Concatenated Configs
+	CustomProxies []VpsConfig
+	CustomRules   []string
+	AutoGroupMap  map[string][]string
 )
 
 func loadConfig() {
 	// Global Configs
-	AirportURL = getEnvWithFatal("AIRPORT_URL")
-	OriginConfigPath = getEnvWithFatal("ORIGIN_CONFIG_PATH")
-	SubconverterHost = getEnvWithFatal("SUBCONVERTER_HOST", "http://127.0.0.1:25500")
-	Port = getEnvWithFatal("RESOLVER_PORT", "8088")
-	RulesURL = getEnvWithFatal("RULES_URL", "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_Full.ini")
+	AirportURL = loadEnvOrFatal("AIRPORT_URL")
+	OriginConfigPath = loadEnvOrFatal("ORIGIN_CONFIG_PATH")
+
+	SubconverterHost = loadEnvOrDefault("SUBCONVERTER_HOST", "http://127.0.0.1:25500")
+	Port = loadEnvOrDefault("RESOLVER_PORT", "8088")
+	RulesURL = loadEnvOrDefault("RULES_URL", "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_Full.ini")
 	// VPS Configs
 	jpVPSNode := VpsConfig{
 		Name:      "🇯🇵 日本 ByteVirt VPS",
-		UUID:      getEnvWithFatal("JP_BYTEVIRT_VPS_UUID"),
-		IP:        getEnvWithFatal("JP_BYTEVIRT_VPS_IP"),
-		Port:      strToIntWithFatal(getEnvWithFatal("JP_BYTEVIRT_VPS_PORT")),
-		PublicKey: getEnvWithFatal("JP_BYTEVIRT_VPS_PUBKEY"),
-		Domain:    getEnvWithFatal("JP_BYTEVIRT_VPS_DOMAIN"),
+		UUID:      loadEnvOrFatal("JP_BYTEVIRT_VPS_UUID"),
+		IP:        loadEnvOrFatal("JP_BYTEVIRT_VPS_IP"),
+		Port:      parseStrToIntOrFatal(loadEnvOrFatal("JP_BYTEVIRT_VPS_PORT")),
+		PublicKey: loadEnvOrFatal("JP_BYTEVIRT_VPS_PUBKEY"),
+		Domain:    loadEnvOrFatal("JP_BYTEVIRT_VPS_DOMAIN"),
 	}
 	// otherVPSNode := VpsConfig{}
 
@@ -78,21 +75,27 @@ func loadConfig() {
 	}
 }
 
-func getEnvWithFatal(key string, defaultVal ...string) string {
-	if val, ok := os.LookupEnv(key); ok {
-		return val
+func loadEnvOrFatal(key string) string {
+	val, exists := os.LookupEnv(key)
+	if !exists || val == "" {
+		log.Fatalf("配置错误: 必需的环境变量 %s 未设置或为空", key)
 	}
-	if len(defaultVal) > 0 {
-		return defaultVal[0]
-	}
-	log.Fatalf("Missing required environment variable: %s", key)
-	return ""
+	return val
 }
 
-func strToIntWithFatal(s string) int {
+func loadEnvOrDefault(key, defaultValue string) string {
+	val, exists := os.LookupEnv(key)
+	if !exists || val == "" {
+		log.Printf("环境变量 %s 未设置或为空，使用默认值: %s", key, defaultValue)
+		return defaultValue
+	}
+	return val
+}
+
+func parseStrToIntOrFatal(s string) int {
 	i, err := strconv.Atoi(s)
 	if err != nil {
-		log.Fatalf("Failed to parse port: %v", err)
+		log.Fatalf("Failed to parse int: %v", err)
 	}
 	return i
 }
