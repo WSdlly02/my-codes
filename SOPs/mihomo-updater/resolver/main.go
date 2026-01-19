@@ -305,6 +305,7 @@ func validateUserAgent(r *http.Request) bool {
 			return true
 		}
 	}
+	log.Printf("Blocked request with User-Agent: %s", ua)
 	return false
 }
 
