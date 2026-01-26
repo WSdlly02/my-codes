@@ -29,19 +29,28 @@ func getArch() string {
 }
 
 // DetectEasyTierExist 检查当前目录下是否已存在指定版本的 EasyTier 核心程序
-func DetectEasyTierExist() (string, bool) {
-	exe := "easytier-core"
+func DetectEasyTierExist() (string, string, bool) {
+	corePath := "easytier-core"
+	cliPath := "easytier-cli"
 	if runtime.GOOS == "windows" {
-		exe = "easytier-core.exe"
+		corePath = "easytier-core.exe"
+		cliPath = "easytier-cli.exe"
 	}
-	path := fmt.Sprintf(
+	corePath = fmt.Sprintf(
 		"easytier-%s-%s-%s/%s",
 		runtime.GOOS,
 		getArch(),
 		config.AppConfig.EasyTierVersion,
-		exe)
-	_, err := os.Stat(path)
-	return path, err == nil
+		corePath)
+	cliPath = fmt.Sprintf(
+		"easytier-%s-%s-%s/%s",
+		runtime.GOOS,
+		getArch(),
+		config.AppConfig.EasyTierVersion,
+		cliPath)
+	_, corePathErr := os.Stat(corePath)
+	_, cliPathErr := os.Stat(cliPath)
+	return corePath, cliPath, corePathErr == nil && cliPathErr == nil
 }
 
 // InstallEasyTier 根据配置的版本和系统环境，从 GitHub 下载并安装 EasyTier

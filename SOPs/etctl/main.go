@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"etctl/config"
 	"etctl/install"
+	"etctl/tui"
 	"fmt"
 	"log"
 	"os"
@@ -12,6 +14,8 @@ import (
 	"runtime"
 	"syscall"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
@@ -22,10 +26,11 @@ func main() {
 
 	// === Install EasyTier ===
 	var (
-		path string
-		ok   bool
+		corePath string
+		cliPath  string
+		ok       bool
 	)
-	if path, ok = install.DetectEasyTierExist(); !ok {
+	if corePath, cliPath, ok = install.DetectEasyTierExist(); !ok {
 		log.Println("EasyTier does not exist, starting installation...")
 		if err := install.InstallEasyTier(); err != nil {
 			log.Println(err)
@@ -33,7 +38,7 @@ func main() {
 		}
 		log.Println("EasyTier installation completed")
 		// 重新检测路径
-		if path, ok = install.DetectEasyTierExist(); !ok {
+		if _, _, ok = install.DetectEasyTierExist(); !ok {
 			log.Println("installation failed")
 			os.Exit(1)
 		}
@@ -56,38 +61,61 @@ func main() {
 	)
 	defer stop()
 
+	// === 创建日志 Channel ===
+	logCh := make(chan string, 100)
+
 	// === Run EasyTier ===
 	log.Println("EasyTier starting...")
-	cmd, err := startEasyTier(path, args)
+	cmd, err := startEasyTierCoreWithLog(corePath, args, logCh)
 	if err != nil {
 		log.Println("EasyTier start failed:", err)
 		os.Exit(1)
 	}
 	log.Println("EasyTier started, PID:", cmd.Process.Pid)
-	// errCh 代表进程退出信号（携带退出错误，nil 表示正常退出）
+
+	// errCh 代表进程退出信号
 	errCh := make(chan error, 1)
 	go func() {
 		waitErr := cmd.Wait()
-		errCh <- waitErr // 可能是 nil（正常退出）或非 nil（异常退出）
+		errCh <- waitErr
 		close(errCh)
+		close(logCh) // 进程退出后关闭日志 channel
 	}()
 
-	// === Wait for Exit ===
-	select {
-	case <-ctx.Done():
-		log.Println("Signal received, starting graceful shutdown...")
-	case err := <-errCh:
-		// 进程自己退出了
-		if err != nil {
-			log.Println("EasyTier Abnormal Exit:", err)
-			os.Exit(1)
+	// === 启动 TUI ===
+	tuiModel := tui.NewModel(logCh, cliPath)
+	p := tea.NewProgram(tuiModel, tea.WithAltScreen())
+
+	// 在单独的 goroutine 中监听退出信号
+	go func() {
+		select {
+		case <-ctx.Done():
+			// 收到系统信号，退出 TUI
+			p.Quit()
+		case <-errCh:
+			// easytier-core 退出，退出 TUI
+			p.Quit()
 		}
-		log.Println("EasyTier Normal Exit")
-		return
+	}()
+
+	// 运行 TUI（阻塞）
+	if _, err := p.Run(); err != nil {
+		log.Println("TUI error:", err)
 	}
 
-	// === Stop EasyTier ===
-	// 走到这一步说明选择了 <-ctx.Done() 分支
+	// === TUI 退出后，优雅关闭 EasyTier ===
+	log.Println("Shutting down EasyTier...")
+
+	// 检查进程是否还在运行
+	select {
+	case <-errCh:
+		// 进程已经退出
+		log.Println("EasyTier already exited")
+		return
+	default:
+		// 进程还在运行，需要关闭
+	}
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -105,21 +133,32 @@ func main() {
 	case <-shutdownCtx.Done():
 		log.Println("graceful shutdown timeout, force termination...")
 		_ = cmd.Process.Kill()
-		<-errCh // 等待 goroutine 结束
+		<-errCh
 		log.Println("EasyTier force terminated")
 	}
 }
 
-// startEasyTier 启动 easytier-core，stdout/stderr 直接输出到控制台
-// 注意：不使用 CommandContext，由调用方负责生命周期管理
-func startEasyTier(binPath string, args []string) (*exec.Cmd, error) {
+// startEasyTierCoreWithLog 启动 easytier-core，将输出发送到 logCh
+func startEasyTierCoreWithLog(binPath string, args []string, logCh chan<- string) (*exec.Cmd, error) {
 	cmd := exec.Command(binPath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
+	// 获取 stdout 和 stderr 管道
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	// 启动 easytier-core
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
+
+	// 启动 goroutine 读取输出
+	go tui.StreamReader(bufio.NewReader(stdout), logCh, "")
+	go tui.StreamReader(bufio.NewReader(stderr), logCh, "[stderr] ")
 
 	return cmd, nil
 }
