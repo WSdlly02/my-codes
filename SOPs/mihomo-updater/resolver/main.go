@@ -24,7 +24,7 @@ type VpsConfig struct {
 	IP        string
 	Port      int
 	PublicKey string
-	Domain    string
+	ShortID   string
 }
 
 // Global Variables
@@ -56,22 +56,33 @@ func loadConfig() {
 		IP:        loadEnvOrFatal("JP_BYTEVIRT_VPS_IP"),
 		Port:      parseStrToIntOrFatal(loadEnvOrFatal("JP_BYTEVIRT_VPS_PORT")),
 		PublicKey: loadEnvOrFatal("JP_BYTEVIRT_VPS_PUBKEY"),
-		Domain:    loadEnvOrFatal("JP_BYTEVIRT_VPS_DOMAIN"),
+		ShortID:   loadEnvOrFatal("JP_BYTEVIRT_VPS_SHORT_ID"),
+	}
+	nlVPSNode := VpsConfig{
+		Name:      "🇳🇱 荷兰 ExtraVM VPS",
+		UUID:      loadEnvOrFatal("NL_EXTRAVM_VPS_UUID"),
+		IP:        loadEnvOrFatal("NL_EXTRAVM_VPS_IP"),
+		Port:      parseStrToIntOrFatal(loadEnvOrFatal("NL_EXTRAVM_VPS_PORT")),
+		PublicKey: loadEnvOrFatal("NL_EXTRAVM_VPS_PUBKEY"),
+		ShortID:   loadEnvOrFatal("NL_EXTRAVM_VPS_SHORT_ID"),
 	}
 	// otherVPSNode := VpsConfig{}
 
 	// Combining Configs
-	CustomProxies = []VpsConfig{jpVPSNode}
+	CustomProxies = []VpsConfig{jpVPSNode, nlVPSNode}
 	CustomRules = []string{
 		"IP-CIDR,100.64.0.0/10,DIRECT,no-resolve",
 		"DOMAIN-SUFFIX,tailscale.com,DIRECT",
-		fmt.Sprintf("IP-CIDR,%s/32,DIRECT,no-resolve", jpVPSNode.IP),
-		fmt.Sprintf("DOMAIN,%s,DIRECT", jpVPSNode.Domain),
 	}
+	for _, node := range CustomProxies {
+		CustomRules = append(CustomRules, fmt.Sprintf("IP-CIDR,%s/32,DIRECT,no-resolve", node.IP))
+	}
+
 	AutoGroupMap = map[string][]string{
 		"日本": {jpVPSNode.Name /*,otherVPSNode.Name */},
-		"自动": {jpVPSNode.Name},
-		"手动": {jpVPSNode.Name},
+		"荷兰": {nlVPSNode.Name},
+		"自动": {jpVPSNode.Name, nlVPSNode.Name},
+		"手动": {jpVPSNode.Name, nlVPSNode.Name},
 	}
 }
 
@@ -104,21 +115,21 @@ func renderProxies(configs []VpsConfig) string {
 	// 定义单个节点的模板
 	const nodeTemplate = `
   {
-    "name":               "%s",
-    "type":               "vless",
-    "uuid":               "%s",
-    "server":             "%s",
-    "port":               %d,
-    "flow":               "xtls-rprx-vision",
-    "udp":                true,
-    "tls":                true,
-    "servername":         "www.microsoft.com",
-    "client-fingerprint": "chrome",
-    "reality-opts": {
-      "public-key": "%s",
-      "short-id":   ""
-    }
-  }`
+		"name": "%s",
+		"type": "vless",
+		"uuid": "%s",
+		"server": "%s",
+		"port": %d,
+		"flow": "xtls-rprx-vision",
+		"udp": true,
+		"tls": true,
+		"servername": "www.cloudflare.com",
+		"client-fingerprint": "chrome",
+		"reality-opts": {
+			"public-key": "%s",
+			"short-id": "%s"
+		}
+	}`
 	var parts []string
 	for _, c := range configs {
 		// 渲染每一个节点
@@ -128,6 +139,7 @@ func renderProxies(configs []VpsConfig) string {
 			c.IP,
 			c.Port,
 			c.PublicKey,
+			c.ShortID,
 		)
 		parts = append(parts, part)
 	}
