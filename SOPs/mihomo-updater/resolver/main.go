@@ -195,6 +195,16 @@ func runYq(input []byte, expression string, args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
+func runYqAll(input []byte, expression string, args ...string) ([]byte, error) {
+	// args can be files
+	yqArgs := append([]string{"eval-all", "-o=json" /*use json fmt*/, expression}, args...)
+	cmd := exec.Command("yq", yqArgs...)
+	cmd.Stdin = bytes.NewReader(input)
+	cmd.Stderr = os.Stderr // Pipe stderr to parent for debug
+
+	return cmd.Output()
+}
+
 func generateConfig() ([]byte, error) {
 	subURL := buildSubconverterURL()
 	log.Printf("Fetching from Subconverter: %s", subURL)
@@ -295,7 +305,7 @@ func handleFull(w http.ResponseWriter, r *http.Request) {
 
 	filter := `select(fileIndex == 0) as $origin | select(fileIndex == 1) as $gen | $origin | .proxies = $gen.proxies | .["proxy-groups"] = $gen.["proxy-groups"] | .rules = $gen.rules`
 
-	merged, err := runYq(generatedConfig, filter, OriginConfigPath, "-")
+	merged, err := runYqAll(generatedConfig, filter, OriginConfigPath, "-")
 	// pass generatedConfig as stdin ("-"), and OriginConfigPath as first arg.
 	// So fileIndex 0 is OriginConfigPath, fileIndex 1 is stdin.
 
