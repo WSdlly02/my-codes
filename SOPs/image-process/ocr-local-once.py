@@ -1,44 +1,42 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os
+
 import argparse
-import subprocess
 import base64
+import os
+import subprocess
+from pathlib import Path
 from urllib.parse import unquote
-from ocrcore import generate_ocr_stream_local, DEFAULT_PROMPT_MAP
+
+from ocrcore import DEFAULT_MODEL, DEFAULT_PROMPT_MAP, generate_ocr_stream_local
 
 
-def encode_image_from_path(image_path) -> str:
-    """将图片文件转换为 base64 编码"""
-    with open(image_path, "rb") as image_file:
+def encode_image_from_path(image_path: Path) -> str:
+    with image_path.open("rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 
 def get_image_from_clipboard():
-    """从剪贴板获取图片数据或文件引用"""
-    # 1. 尝试获取文件引用 (如 file:///path/to/image.png)
     try:
         result = subprocess.run(
             ["wl-paste", "--no-newline", "--type", "text/uri-list"],
             capture_output=True,
             text=True,
+            check=False,
         )
         content = result.stdout.strip()
         if content.startswith("file://"):
-            path = unquote(content[7:])
-            print(f"[OCR] 检测到剪贴板中的文件引用: {path}")
+            path = Path(unquote(content[7:])).expanduser().resolve()
+            print(f"[OCR] 检测到剪贴板文件引用: {path}")
             return encode_image_from_path(path), f"文件引用: {path}"
-        elif content.startswith("/") and (
-            content.endswith(".png")
-            or content.endswith(".jpg")
-            or content.endswith(".jpeg")
-        ):
-            print(f"[OCR] 检测到剪贴板中的路径字符串: {content}")
-            return encode_image_from_path(content), f"路径引用: {content}"
+        if content.startswith("/"):
+            path = Path(content).expanduser().resolve()
+            if path.exists():
+                print(f"[OCR] 检测到剪贴板路径: {path}")
+                return encode_image_from_path(path), f"路径引用: {path}"
     except Exception:
         pass
 
-    # 2. 尝试直接获取图片二进制数据
     try:
         result = subprocess.run(
             ["wl-paste", "--no-newline", "--type", "image/png"],
@@ -50,70 +48,87 @@ def get_image_from_clipboard():
     except subprocess.CalledProcessError:
         pass
     except FileNotFoundError:
-        print("[OCR] 错误：未找到 'wl-paste' 命令。请确保已安装 wl-clipboard。")
+        print("[OCR] 错误：未找到 `wl-paste`，请安装 wl-clipboard。")
 
     return None, None
 
 
-def main():
-    parser = argparse.ArgumentParser(description="使用 qwen3-vl:8b 进行 OCR 识别的脚本")
-    parser.add_argument(
-        "image_path", nargs="?", help="图片文件的路径（可选，默认从剪贴板获取）"
-    )
+def main() -> int:
+    parser = argparse.ArgumentParser(description="对单张图片执行本地 OCR。")
+    parser.add_argument("image_path", nargs="?", help="图片路径；留空时尝试从剪贴板读取")
     parser.add_argument(
         "-p",
         "--prompt-style",
-        choices=list(DEFAULT_PROMPT_MAP.keys()),
-        default="t",
-        help="识别风格: t (纯文本), md (Markdown), f (数学公式/LaTeX), table (表格), json (JSON格式), desc (详细描述图片)",
+        choices=sorted(DEFAULT_PROMPT_MAP),
+        default="text",
+        help="OCR 风格，兼容旧缩写 t/md/f/table/json/desc",
+    )
+    parser.add_argument(
+        "-m",
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Ollama 模型名，默认: {DEFAULT_MODEL}",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        default="http://localhost:11434/api/generate",
+        help="Ollama generate API 地址",
+    )
+    parser.add_argument(
+        "--no-copy",
+        action="store_true",
+        help="识别完成后不自动复制结果到剪贴板",
     )
     args = parser.parse_args()
 
     base64_image = None
     source_info = ""
-    headless = os.getenv("DISPLAY") is None
-    if headless:
-        print("[OCR] 处于无头模式，跳过剪贴板操作。")
+    headless = os.getenv("WAYLAND_DISPLAY") is None and os.getenv("DISPLAY") is None
 
-    # 检查命令行参数
     if args.image_path:
-        try:
-            base64_image = encode_image_from_path(args.image_path)
-            source_info = f"[OCR] 文件: {args.image_path}"
-        except FileNotFoundError:
-            print(f"[OCR] 错误：找不到文件 {args.image_path}")
-            return
+        image_path = Path(args.image_path).expanduser().resolve()
+        if not image_path.is_file():
+            print(f"[OCR] 错误：找不到文件 {image_path}")
+            return 1
+        base64_image = encode_image_from_path(image_path)
+        source_info = f"文件: {image_path}"
     elif not headless:
-        # 尝试从剪贴板获取
         print("[OCR] 未指定路径，尝试从剪贴板获取图片...")
         base64_image, source_info = get_image_from_clipboard()
     else:
-        print("[OCR] 无头模式且未指定图片路径，无法获取图片，退出。")
-        return
+        print("[OCR] 当前为无图形环境，且未提供图片路径。")
+        return 1
 
     if not base64_image:
-        print("[OCR] 无法获取图片数据（剪贴板为空或格式不支持），退出。")
-        return
+        print("[OCR] 无法获取图片数据。")
+        return 1
 
-    print(
-        f"[OCR] 正在使用 qwen3-vl:8b (模式:{args.prompt_style}) 识别 {source_info}..."
-    )
+    print(f"[OCR] 开始识别 {source_info}，模型: {args.model}，风格: {args.prompt_style}")
 
     full_text = ""
     try:
-        for content in generate_ocr_stream_local(base64_image, args.prompt_style):
+        for content in generate_ocr_stream_local(
+            base64_image,
+            args.prompt_style,
+            model=args.model,
+            ollama_url=args.ollama_url,
+        ):
             print(content, end="", flush=True)
             full_text += content
+    except Exception as exc:
+        print(f"\n[OCR] 请求出错: {exc}")
+        return 1
 
-        # 自动复制到剪贴板
-        if full_text.strip() and not headless:
+    if full_text.strip() and not headless and not args.no_copy:
+        try:
             subprocess.run(["wl-copy"], input=full_text.encode("utf-8"), check=True)
-            print("\n\n[OCR] 结果已自动复制到剪贴板。")
-    except Exception as e:
-        print(f"\n[OCR] 请求出错: {e}")
+            print("\n\n[OCR] 结果已复制到剪贴板。")
+        except FileNotFoundError:
+            print("\n\n[OCR] 未找到 `wl-copy`，跳过复制。")
 
     print("\n[OCR] 识别完成。")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

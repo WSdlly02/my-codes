@@ -1,92 +1,119 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os
+
 import argparse
 import base64
-from ocrcore import generate_ocr_stream_local, DEFAULT_PROMPT_MAP
+from pathlib import Path
+from typing import Iterable
+
+from ocrcore import DEFAULT_MODEL, DEFAULT_PROMPT_MAP, generate_ocr_stream_local
+
+SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 
 
-def encode_image_from_path(image_path) -> str:
-    """将图片文件转换为 base64 编码"""
-    with open(image_path, "rb") as image_file:
+def encode_image_from_path(image_path: Path) -> str:
+    with image_path.open("rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 
-def is_image_file(filename):
-    """检查文件是否为支持的图片格式"""
-    extensions = (".png", ".jpg", ".jpeg", ".webp")
-    return filename.lower().endswith(extensions)
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="批量对文件夹下的图片进行 OCR 识别并汇总到 Markdown"
+def iter_image_files(dir_path: Path, recursive: bool) -> Iterable[Path]:
+    pattern = "**/*" if recursive else "*"
+    return sorted(
+        path
+        for path in dir_path.glob(pattern)
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
     )
-    parser.add_argument("dir_path", help="包含图片的文件夹路径")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="批量对目录中的图片执行本地 OCR，并汇总为 Markdown 文档。"
+    )
+    parser.add_argument("dir_path", help="包含图片的目录路径")
     parser.add_argument(
         "-o",
         "--output",
         default="ocr_results.md",
-        help="输出的 Markdown 文件名 (默认: ocr_results.md)",
+        help="输出 Markdown 文件名或路径，默认在输入目录下生成 ocr_results.md",
     )
     parser.add_argument(
         "-p",
         "--prompt-style",
-        choices=list(DEFAULT_PROMPT_MAP.keys()),
-        default="t",
-        help="识别风格: t (纯文本), md (Markdown), f (数学公式/LaTeX), table (表格), json (JSON格式), desc (详细描述图片)",
+        choices=sorted(DEFAULT_PROMPT_MAP),
+        default="text",
+        help="OCR 风格，兼容旧缩写 t/md/f/table/json/desc",
+    )
+    parser.add_argument(
+        "-m",
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Ollama 模型名，默认: {DEFAULT_MODEL}",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="递归扫描子目录中的图片",
+    )
+    parser.add_argument(
+        "--ollama-url",
+        default="http://localhost:11434/api/generate",
+        help="Ollama generate API 地址",
     )
     args = parser.parse_args()
 
-    if not os.path.isdir(args.dir_path):
-        print(f"[Batch OCR] 错误：{args.dir_path} 不是一个有效的目录")
-        return
+    input_dir = Path(args.dir_path).expanduser().resolve()
+    if not input_dir.is_dir():
+        print(f"[Batch OCR] 错误：{input_dir} 不是有效目录")
+        return 1
 
-    # 获取所有图片文件并排序
-    files = [f for f in os.listdir(args.dir_path) if is_image_file(f)]
-    files.sort()
+    output_path = Path(args.output).expanduser()
+    if not output_path.is_absolute():
+        output_path = input_dir / output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    files = list(iter_image_files(input_dir, args.recursive))
+    if output_path in files:
+        files.remove(output_path)
 
     if not files:
-        print(f"[Batch OCR] 在目录 {args.dir_path} 中未找到图片文件")
-        return
+        print(f"[Batch OCR] 在目录 {input_dir} 中未找到图片文件")
+        return 1
 
-    output_path = os.path.join(args.dir_path, args.output)
-    print(f"[Batch OCR] 找到 {len(files)} 张图片，准备开始识别...")
-    print(f"[Batch OCR] 结果将保存至: {output_path}")
+    print(f"[Batch OCR] 找到 {len(files)} 张图片")
+    print(f"[Batch OCR] 输出文件: {output_path}")
 
-    with open(output_path, "w", encoding="utf-8") as md_file:
-        md_file.write(f"# OCR 识别结果汇总\n\n")
-        md_file.write(f"- **源目录**: `{args.dir_path}`\n")
-        md_file.write(f"- **识别模式**: `{args.prompt_style}`\n\n")
+    with output_path.open("w", encoding="utf-8") as md_file:
+        md_file.write("# OCR 识别结果汇总\n\n")
+        md_file.write(f"- 源目录: `{input_dir}`\n")
+        md_file.write(f"- 识别模式: `{args.prompt_style}`\n")
+        md_file.write(f"- 模型: `{args.model}`\n\n")
         md_file.write("---\n\n")
 
-        for i, filename in enumerate(files, 1):
-            full_path = os.path.join(args.dir_path, filename)
-            print(f"[{i}/{len(files)}] 正在识别: {filename}...")
-
-            md_file.write(f"## 文件: {filename}\n\n")
+        for index, image_path in enumerate(files, start=1):
+            print(f"[{index}/{len(files)}] 正在识别: {image_path.name}")
+            md_file.write(f"## 文件: {image_path.relative_to(input_dir)}\n\n")
 
             try:
-                base64_image = encode_image_from_path(full_path)
-
-                full_text = ""
-                for content in generate_ocr_stream_local(
-                    base64_image,
-                    args.prompt_style,
-                    model="qwen3-vl:4b",  # 使用更小的模型
-                ):
-                    full_text += content
-
+                base64_image = encode_image_from_path(image_path)
+                full_text = "".join(
+                    generate_ocr_stream_local(
+                        base64_image,
+                        args.prompt_style,
+                        model=args.model,
+                        ollama_url=args.ollama_url,
+                    )
+                )
                 md_file.write(full_text.strip())
                 md_file.write("\n\n---\n\n")
-                md_file.flush()  # 实时写入
-            except Exception as e:
-                error_msg = f"识别失败: {e}"
+                md_file.flush()
+            except Exception as exc:
+                error_msg = f"识别失败: {exc}"
                 print(f"  [!] {error_msg}")
                 md_file.write(f"> **错误**: {error_msg}\n\n---\n\n")
 
-    print(f"\n[Batch OCR] 全部处理完成！结果已保存至 {output_path}")
+    print(f"[Batch OCR] 完成，结果已写入 {output_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

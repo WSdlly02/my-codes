@@ -1,156 +1,160 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import argparse
 import os
 import subprocess
 from pathlib import Path
 
-# ================= 配置区域 =================
-INPUT_FOLDER = "/home/wsdlly02/Disks/Files/Files/College/录音整理/audio_files"
-OUTPUT_FOLDER_RELATIVE = "transcripts_local"
-OUTPUT_FOLDER = Path(INPUT_FOLDER) / OUTPUT_FOLDER_RELATIVE
-SUPPORTED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".flac", ".mkv"}
-MODEL = "large-v3-turbo"
-LANGUAGE = "Chinese"
-# ===========================================
+SUPPORTED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".flac", ".mkv", ".aac", ".ogg"}
 
 
-def post_process_srt(srt_path, output_path):
-    """将 SRT 格式转换为自定义的时间戳格式 [MM:SS.mmm --> MM:SS.mmm] Text"""
-    if not os.path.exists(srt_path):
+def post_process_srt(srt_path: Path, output_path: Path) -> None:
+    if not srt_path.exists():
         return
 
-    with open(srt_path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
+    lines = srt_path.read_text(encoding="utf-8").splitlines()
     processed_lines = []
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        if line.isdigit():  # 序号行
-            i += 1
-            if i < len(lines):
-                time_line = lines[i].strip()
-                if " --> " in time_line:
-                    # 格式: 00:10:32,860 --> 00:10:35,300
-                    start, end = time_line.split(" --> ")
+    index = 0
 
-                    def format_time(t):
-                        t = t.replace(",", ".")
-                        # 如果是 00: 开头则去掉，保留 MM:SS.mmm
-                        if t.startswith("00:"):
-                            return t[3:]
-                        return t
+    while index < len(lines):
+        line = lines[index].strip()
+        if not line.isdigit():
+            index += 1
+            continue
 
-                    new_time = f"[{format_time(start)} --> {format_time(end)}]"
-                    i += 1
-                    text_parts = []
-                    # 读取接下来的文本行，直到遇到空行
-                    while i < len(lines) and lines[i].strip() != "":
-                        text_parts.append(lines[i].strip())
-                        i += 1
-                    text = " ".join(text_parts)
-                    processed_lines.append(f"{new_time} {text}")
-        i += 1
+        index += 1
+        if index >= len(lines):
+            break
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(processed_lines))
+        time_line = lines[index].strip()
+        if " --> " not in time_line:
+            index += 1
+            continue
 
-    # 处理完后删除原始 srt 文件
-    os.remove(srt_path)
+        start, end = time_line.split(" --> ", maxsplit=1)
+
+        def format_time(value: str) -> str:
+            value = value.replace(",", ".")
+            return value[3:] if value.startswith("00:") else value
+
+        new_time = f"[{format_time(start)} --> {format_time(end)}]"
+        index += 1
+        text_parts = []
+        while index < len(lines) and lines[index].strip():
+            text_parts.append(lines[index].strip())
+            index += 1
+        processed_lines.append(f"{new_time} {' '.join(text_parts)}")
+
+    output_path.write_text("\n".join(processed_lines), encoding="utf-8")
+    srt_path.unlink(missing_ok=True)
 
 
-def batch_transcribe():
-    # 1. 准备目录
-    if not os.path.exists(OUTPUT_FOLDER):
-        os.makedirs(OUTPUT_FOLDER)
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="使用本地 Whisper 批量转写音频文件，并输出整理后的 txt。"
+    )
+    parser.add_argument("input_dir", help="音频目录")
+    parser.add_argument(
+        "-o",
+        "--output-dir",
+        default="transcripts_local",
+        help="输出目录名或路径，默认在输入目录下创建 transcripts_local",
+    )
+    parser.add_argument("--model", default="large-v3-turbo", help="Whisper 模型名")
+    parser.add_argument("--language", default="Chinese", help="Whisper 语言参数")
+    parser.add_argument(
+        "--output-format",
+        default="srt",
+        choices=["srt", "txt", "vtt", "tsv", "json"],
+        help="whisper.sh 输出格式，默认 srt",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="即使输出已存在也重新处理",
+    )
+    return parser.parse_args()
 
-    if not os.path.exists(INPUT_FOLDER):
-        print(f"❌ 错误: 文件夹 '{INPUT_FOLDER}' 不存在。")
-        return
 
-    # 2. 扫描文件
-    files = [
-        f
-        for f in os.listdir(INPUT_FOLDER)
-        if os.path.splitext(f)[1].lower() in SUPPORTED_EXTENSIONS
-    ]
-    total_files = len(files)
+def main() -> int:
+    args = parse_args()
+    input_dir = Path(args.input_dir).expanduser().resolve()
+    if not input_dir.is_dir():
+        print(f"❌ 错误: 目录不存在 {input_dir}")
+        return 1
 
-    if total_files == 0:
-        print(f"📂 '{INPUT_FOLDER}' 中没有找到支持的音频文件。")
-        return
+    output_dir = Path(args.output_dir).expanduser()
+    if not output_dir.is_absolute():
+        output_dir = input_dir / output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 获取 whisper.sh 的绝对路径
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    whisper_script = os.path.join(script_dir, "whisper.sh")
+    script_dir = Path(__file__).resolve().parent
+    whisper_script = script_dir / "whisper.sh"
+    if not whisper_script.is_file():
+        print(f"❌ 错误: 未找到 {whisper_script}")
+        return 1
 
-    print(f"📋 任务列表: 共 {total_files} 个文件")
+    files = sorted(
+        path for path in input_dir.iterdir() if path.suffix.lower() in SUPPORTED_EXTENSIONS
+    )
+    if not files:
+        print(f"📂 {input_dir} 中没有找到支持的音频文件。")
+        return 1
+
+    print(f"📋 任务列表: 共 {len(files)} 个文件")
     print("=" * 60)
 
-    # 3. 开始循环处理
-    for index, filename in enumerate(files):
-        file_stem = Path(filename).stem
-        output_path = OUTPUT_FOLDER / f"{file_stem}.txt"
-        srt_file = OUTPUT_FOLDER / f"{file_stem}.srt"
+    failures = 0
+    for index, audio_path in enumerate(files, start=1):
+        file_stem = audio_path.stem
+        final_txt_path = output_dir / f"{file_stem}.txt"
+        raw_output_path = output_dir / f"{file_stem}.{args.output_format}"
 
-        # 如果输出文件已存在，则跳过
-        if output_path.exists():
-            print(f"[{index+1}/{total_files}] ⏭️ 跳过 (已存在): {filename}")
+        if final_txt_path.exists() and not args.force:
+            print(f"[{index}/{len(files)}] ⏭️ 跳过 (已存在): {audio_path.name}")
             continue
 
-        # 如果 SRT 文件已存在，则直接进行后处理
-        if srt_file.exists():
-            print(
-                f"[{index+1}/{total_files}] ⏭️ 字幕文件已存在，直接进行后处理: {filename}"
-            )
-            post_process_srt(srt_file, output_path)
-            continue
-
-        # Whisper 默认会生成多种格式，我们主要关注 .srt 或 .txt
-        # 这里我们让 whisper.sh 处理，并指定输出目录
-        print(f"\n[{index+1}/{total_files}] 🎙️ 正在处理: {filename}")
+        print(f"\n[{index}/{len(files)}] 🎙️ 正在处理: {audio_path.name}")
         print("-" * 30)
 
         try:
-            # 调用 whisper.sh
-            # 参数说明:
-            # --model large-v3: 使用大模型
-            # --language Chinese: 指定语言
-            # --output_dir: 指定输出目录
-            # --output_format srt: 指定输出格式
             cmd = [
                 "bash",
-                whisper_script,
-                filename,
+                str(whisper_script),
+                audio_path.name,
                 "--model",
-                MODEL,
+                args.model,
                 "--language",
-                LANGUAGE,
+                args.language,
                 "--output_dir",
-                OUTPUT_FOLDER_RELATIVE,
+                os.path.relpath(output_dir, input_dir),
                 "--output_format",
-                "srt",
+                args.output_format,
             ]
+            subprocess.run(cmd, check=True, cwd=input_dir)
 
-            # 使用 subprocess.run 并实时打印输出
-            # 设置 cwd 为 INPUT_FOLDER，这样 whisper.sh 挂载的就是音频所在目录
-            subprocess.run(cmd, check=True, cwd=INPUT_FOLDER)
+            if args.output_format == "srt":
+                post_process_srt(raw_output_path, final_txt_path)
+            elif raw_output_path.exists():
+                if raw_output_path != final_txt_path:
+                    final_txt_path.write_text(
+                        raw_output_path.read_text(encoding="utf-8"), encoding="utf-8"
+                    )
+                else:
+                    final_txt_path = raw_output_path
 
-            # 后处理：将生成的 .srt 转换为自定义格式的 .txt
+            print(f"✅ 处理完成: {audio_path.name} -> {final_txt_path.name}")
+        except subprocess.CalledProcessError as exc:
+            failures += 1
+            print(f"❌ 处理失败 {audio_path.name}: {exc}")
+        except Exception as exc:
+            failures += 1
+            print(f"❌ 未知错误 {audio_path.name}: {exc}")
 
-            post_process_srt(srt_file, output_path)
-
-            print("-" * 30)
-            print(f"✅ 处理完成并已转换格式: {filename}")
-
-        except subprocess.CalledProcessError as e:
-            print(f"\n❌ 处理出错 {filename}: {str(e)}")
-        except Exception as e:
-            print(f"\n❌ 发生未知错误 {filename}: {str(e)}")
-
-    print("\n🎉 所有文件处理完毕！")
+    print("\n🎉 所有文件处理完毕。")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
-    batch_transcribe()
+    raise SystemExit(main())

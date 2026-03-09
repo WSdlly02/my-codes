@@ -1,99 +1,111 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description="批量将文件夹下的 PDF 转换为图片并进行 OCR 识别汇总"
+        description="批量将目录中的 PDF 转为图片，再调用本地 OCR 输出 Markdown。"
     )
-    parser.add_argument("dir_path", help="包含 PDF 文件的文件夹路径")
+    parser.add_argument("dir_path", help="PDF 文件目录")
     parser.add_argument(
-        "-d", "--dpi", type=int, default=300, help="PDF 转图片的 DPI (默认: 300)"
+        "-d",
+        "--dpi",
+        type=int,
+        default=300,
+        help="PDF 转图片的 DPI，默认 300",
     )
     parser.add_argument(
-        "-p", "--prompt-style", default="t", help="OCR 识别风格 (默认: t)"
+        "-p",
+        "--prompt-style",
+        default="text",
+        help="OCR 风格，兼容 t/md/f/table/json/desc",
     )
-
+    parser.add_argument(
+        "--output-root",
+        default=None,
+        help="图片和 OCR 结果的根目录，默认使用 PDF 所在目录",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="即使已存在 ocr_results.md 也重新处理",
+    )
     args = parser.parse_args()
 
-    if not os.path.isdir(args.dir_path):
-        print(f"[Error] {args.dir_path} 不是一个有效的目录")
-        return
+    input_dir = Path(args.dir_path).expanduser().resolve()
+    if not input_dir.is_dir():
+        print(f"[Error] {input_dir} 不是有效目录")
+        return 1
 
-    # 获取当前脚本所在目录，以便定位其他脚本
-    # 假设脚本都在各自的 SOPs 子目录下，或者用户在特定目录下运行
-    # 根据 workspace 结构：
-    # SOPs/pdf-process/export-imgs.py
-    # SOPs/image-process/ocr-local.py
+    base_dir = Path(__file__).resolve().parent.parent
+    export_imgs_script = base_dir / "pdf-process" / "export-imgs.py"
+    batch_ocr_script = base_dir / "image-process" / "ocr-local.py"
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    export_imgs_script = os.path.join(base_dir, "pdf-process", "export-imgs.py")
-    batch_ocr_script = os.path.join(base_dir, "image-process", "ocr-local.py")
-    # 1. 查找所有 PDF 文件
-    pdf_files = [f for f in os.listdir(args.dir_path) if f.lower().endswith(".pdf")]
-    pdf_files.sort()
-
+    pdf_files = sorted(path for path in input_dir.iterdir() if path.suffix.lower() == ".pdf")
     if not pdf_files:
-        print(f"[Info] 在目录 {args.dir_path} 中未找到 PDF 文件")
-        return
+        print(f"[Info] 在目录 {input_dir} 中未找到 PDF 文件")
+        return 1
+
+    output_root = (
+        Path(args.output_root).expanduser().resolve() if args.output_root else input_dir
+    )
+    output_root.mkdir(parents=True, exist_ok=True)
 
     print(f"[Batch] 找到 {len(pdf_files)} 个 PDF 文件，准备处理...")
+    failures = 0
 
-    for pdf_file in pdf_files:
-        pdf_path = os.path.join(args.dir_path, pdf_file)
-        pdf_name = os.path.splitext(pdf_file)[0]
-        output_img_dir = os.path.join(args.dir_path, pdf_name)
+    for pdf_path in pdf_files:
+        output_img_dir = output_root / pdf_path.stem
+        ocr_output = output_img_dir / "ocr_results.md"
 
-        print(f"\n{'='*60}")
-        print(f"[Step 1] 正在转换 PDF 为图片: {pdf_file}")
+        if ocr_output.exists() and not args.force:
+            print(f"[Skip] 已存在 OCR 结果: {ocr_output}")
+            continue
 
-        # 调用 pdf-to-imgs.py
+        print(f"\n{'=' * 60}")
+        print(f"[Step 1] PDF 转图片: {pdf_path.name}")
+
         try:
             subprocess.run(
                 [
                     sys.executable,
-                    export_imgs_script,
-                    pdf_path,
+                    str(export_imgs_script),
+                    str(pdf_path),
                     "-o",
-                    output_img_dir,
+                    str(output_img_dir),
                     "-d",
                     str(args.dpi),
                 ],
                 check=True,
-                cwd=os.path.dirname(export_imgs_script),
+                cwd=export_imgs_script.parent,
             )
-        except subprocess.CalledProcessError as e:
-            print(f"[Error] PDF 转换失败: {pdf_file}, 错误: {e}")
-            continue
-
-        print(f"[Step 2] 正在对图片进行批量 OCR: {output_img_dir}")
-
-        # 调用 ocr-local.py
-        # ocr-local.py 默认在图片目录下生成 ocr_results.md
-        try:
+            print(f"[Step 2] 图片 OCR: {output_img_dir}")
             subprocess.run(
                 [
                     sys.executable,
-                    batch_ocr_script,
-                    output_img_dir,
+                    str(batch_ocr_script),
+                    str(output_img_dir),
                     "-p",
                     args.prompt_style,
+                    "-o",
+                    str(ocr_output),
                 ],
                 check=True,
-                cwd=os.path.dirname(batch_ocr_script),
+                cwd=batch_ocr_script.parent,
             )
-        except subprocess.CalledProcessError as e:
-            print(f"[Error] OCR 批量处理失败: {output_img_dir}, 错误: {e}")
-            continue
+        except subprocess.CalledProcessError as exc:
+            failures += 1
+            print(f"[Error] 处理失败: {pdf_path.name}, 错误: {exc}")
 
-    print(f"\n{'='*60}")
-    print(f"[Done] 所有 PDF 已处理完成。")
+    print(f"\n{'=' * 60}")
+    print("[Done] 所有 PDF 已处理完成。")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
