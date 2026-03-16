@@ -1,0 +1,63 @@
+name: Build and Push Qwen ASR Docker Images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "SOPs/audio-process/Dockerfile*"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-cpu:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # - name: Free up disk space
+      #   uses: jlumbroso/free-disk-space@main # 或 endersonmenezes/free-disk-space@v3
+      #   with:
+      #     tool-cache: true # 删除GitHub Actions工具缓存 ~5GB+
+      #     android: true # 删除Android SDK ~10GB+
+      #     dotnet: true # 删除.NET ~10GB+
+      #     haskell: true # 删除Haskell
+      #     large-packages: true # 删除大包如azure-cli等
+      #     docker-images: false
+      #     swap-storage: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase repository name
+        run: echo "REPO_LOWER=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Build and push qwen-asr:cpu image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./SOPs/audio-process
+          file: SOPs/audio-process/Dockerfile.qwen-asr:cpu
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/qwen-asr:cpu
+            ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/qwen-asr:cpu-latest
+          cache-from: type=gha # 用GitHub Actions缓存加速后续构建
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64

@@ -2,57 +2,19 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import os
 import subprocess
 from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".flac", ".mkv", ".aac", ".ogg"}
-
-
-def post_process_srt(srt_path: Path, output_path: Path) -> None:
-    if not srt_path.exists():
-        return
-
-    lines = srt_path.read_text(encoding="utf-8").splitlines()
-    processed_lines = []
-    index = 0
-
-    while index < len(lines):
-        line = lines[index].strip()
-        if not line.isdigit():
-            index += 1
-            continue
-
-        index += 1
-        if index >= len(lines):
-            break
-
-        time_line = lines[index].strip()
-        if " --> " not in time_line:
-            index += 1
-            continue
-
-        start, end = time_line.split(" --> ", maxsplit=1)
-
-        def format_time(value: str) -> str:
-            value = value.replace(",", ".")
-            return value[3:] if value.startswith("00:") else value
-
-        new_time = f"[{format_time(start)} --> {format_time(end)}]"
-        index += 1
-        text_parts = []
-        while index < len(lines) and lines[index].strip():
-            text_parts.append(lines[index].strip())
-            index += 1
-        processed_lines.append(f"{new_time} {' '.join(text_parts)}")
-
-    output_path.write_text("\n".join(processed_lines), encoding="utf-8")
-    srt_path.unlink(missing_ok=True)
+IMAGE_NAME = "qwen-asr:cpu"
+REMOTE_SCRIPT_PATH = "/workspace/qwen-asr.py"
+REMOTE_AUDIO_DIR = "/data"
+REMOTE_OUTPUT_DIR = "/output"
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="使用本地 Whisper 批量转写音频文件，并输出整理后的 txt。"
+        description="使用本地 qwen-asr 批量转写音频文件，并输出 txt。"
     )
     parser.add_argument("input_dir", help="音频目录")
     parser.add_argument(
@@ -61,13 +23,20 @@ def parse_args():
         default="transcripts_local",
         help="输出目录名或路径，默认在输入目录下创建 transcripts_local",
     )
-    parser.add_argument("--model", default="large-v3-turbo", help="Whisper 模型名")
-    parser.add_argument("--language", default="Chinese", help="Whisper 语言参数")
     parser.add_argument(
-        "--output-format",
-        default="srt",
-        choices=["srt", "txt", "vtt", "tsv", "json"],
-        help="whisper.sh 输出格式，默认 srt",
+        "--wav-dir",
+        default=".qwen_asr_wavs",
+        help="中间 wav 文件目录名或路径，默认在输入目录下创建 .qwen_asr_wavs",
+    )
+    parser.add_argument(
+        "--keep-wav",
+        action="store_true",
+        help="保留中间 wav 文件，默认处理完成后删除",
+    )
+    parser.add_argument(
+        "--ffmpeg-bin",
+        default="ffmpeg",
+        help="ffmpeg 可执行文件名，默认 ffmpeg",
     )
     parser.add_argument(
         "--force",
@@ -84,15 +53,24 @@ def main() -> int:
         print(f"❌ 错误: 目录不存在 {input_dir}")
         return 1
 
+    script_dir = Path(__file__).resolve().parent
     output_dir = Path(args.output_dir).expanduser()
     if not output_dir.is_absolute():
         output_dir = input_dir / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    script_dir = Path(__file__).resolve().parent
-    whisper_script = script_dir / "whisper.sh"
-    if not whisper_script.is_file():
-        print(f"❌ 错误: 未找到 {whisper_script}")
+    wav_dir = Path(args.wav_dir).expanduser()
+    if not wav_dir.is_absolute():
+        wav_dir = input_dir / wav_dir
+    wav_dir.mkdir(parents=True, exist_ok=True)
+
+    qwen_asr_script = script_dir / "qwen-asr.py"
+    dockerfile_path = script_dir / "Dockerfile.qwen-asr:cpu"
+    if not qwen_asr_script.is_file():
+        print(f"❌ 错误: 未找到 {qwen_asr_script}")
+        return 1
+    if not dockerfile_path.is_file():
+        print(f"❌ 错误: 未找到 {dockerfile_path}")
         return 1
 
     files = sorted(
@@ -105,11 +83,18 @@ def main() -> int:
     print(f"📋 任务列表: 共 {len(files)} 个文件")
     print("=" * 60)
 
+    try:
+        ensure_docker_image_exists()
+    except Exception as exc:
+        print(f"❌ Docker 镜像检查失败: {exc}")
+        return 1
+
     failures = 0
     for index, audio_path in enumerate(files, start=1):
         file_stem = audio_path.stem
         final_txt_path = output_dir / f"{file_stem}.txt"
-        raw_output_path = output_dir / f"{file_stem}.{args.output_format}"
+        wav_path = wav_dir / f"{file_stem}.wav"
+        raw_output_path = output_dir / f"{file_stem}-raw-transcription.md"
 
         if final_txt_path.exists() and not args.force:
             print(f"[{index}/{len(files)}] ⏭️ 跳过 (已存在): {audio_path.name}")
@@ -119,30 +104,21 @@ def main() -> int:
         print("-" * 30)
 
         try:
-            cmd = [
-                "bash",
-                str(whisper_script),
-                audio_path.name,
-                "--model",
-                args.model,
-                "--language",
-                args.language,
-                "--output_dir",
-                os.path.relpath(output_dir, input_dir),
-                "--output_format",
-                args.output_format,
-            ]
-            subprocess.run(cmd, check=True, cwd=input_dir)
+            convert_to_wav(audio_path, wav_path, args.ffmpeg_bin)
+            generated_raw_path = run_qwen_asr_container(
+                script_dir=script_dir,
+                wav_dir=wav_dir,
+                output_dir=output_dir,
+                wav_path=wav_path,
+            )
 
-            if args.output_format == "srt":
-                post_process_srt(raw_output_path, final_txt_path)
-            elif raw_output_path.exists():
-                if raw_output_path != final_txt_path:
-                    final_txt_path.write_text(
-                        raw_output_path.read_text(encoding="utf-8"), encoding="utf-8"
-                    )
-                else:
-                    final_txt_path = raw_output_path
+            final_txt_path.write_text(
+                generated_raw_path.read_text(encoding="utf-8").strip() + "\n",
+                encoding="utf-8",
+            )
+
+            if generated_raw_path != raw_output_path and generated_raw_path.exists():
+                generated_raw_path.rename(raw_output_path)
 
             print(f"✅ 处理完成: {audio_path.name} -> {final_txt_path.name}")
         except subprocess.CalledProcessError as exc:
@@ -151,9 +127,87 @@ def main() -> int:
         except Exception as exc:
             failures += 1
             print(f"❌ 未知错误 {audio_path.name}: {exc}")
+        finally:
+            if not args.keep_wav:
+                wav_path.unlink(missing_ok=True)
 
     print("\n🎉 所有文件处理完毕。")
     return 1 if failures else 0
+
+
+def ensure_docker_image_exists() -> None:
+    inspect_cmd = ["docker", "image", "inspect", IMAGE_NAME]
+    inspect_result = subprocess.run(
+        inspect_cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if inspect_result.returncode == 0:
+        return
+    raise RuntimeError(f"本地未找到 Docker 镜像 {IMAGE_NAME}")
+
+
+def convert_to_wav(audio_path: Path, wav_path: Path, ffmpeg_bin: str) -> None:
+    wav_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ffmpeg_bin,
+        "-y",
+        "-i",
+        str(audio_path),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        str(wav_path),
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def run_qwen_asr_container(
+    script_dir: Path,
+    wav_dir: Path,
+    output_dir: Path,
+    wav_path: Path,
+) -> Path:
+    cache_dir = Path.home() / ".cache" / "huggingface"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    remote_wav_path = Path(REMOTE_AUDIO_DIR) / wav_path.name
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        f"{cache_dir}:/root/.cache/huggingface",
+        "-v",
+        f"{script_dir}:/workspace",
+        "-v",
+        f"{wav_dir}:{REMOTE_AUDIO_DIR}",
+        "-v",
+        f"{output_dir}:{REMOTE_OUTPUT_DIR}",
+        "-w",
+        REMOTE_OUTPUT_DIR,
+        IMAGE_NAME,
+        REMOTE_SCRIPT_PATH,
+        str(remote_wav_path),
+    ]
+    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+    output_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not output_lines:
+        raise RuntimeError("qwen-asr 容器未返回输出文件路径")
+
+    container_output_path = Path(output_lines[-1])
+    generated_name = container_output_path.name
+    generated_raw_path = wav_dir / generated_name
+    if not generated_raw_path.exists():
+        alt_path = output_dir / generated_name
+        if alt_path.exists():
+            return alt_path
+        raise FileNotFoundError(f"未找到 qwen-asr 输出文件: {generated_name}")
+    return generated_raw_path
 
 
 if __name__ == "__main__":

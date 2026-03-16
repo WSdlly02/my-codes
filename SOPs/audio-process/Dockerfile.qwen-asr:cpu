@@ -1,0 +1,21 @@
+FROM python:3.14-slim-trixie
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+  libjemalloc-dev && \
+  rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/qwen-asr-env
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN pip install --no-cache-dir --upgrade pip && \
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+  pip install --no-cache-dir -U qwen-asr
+
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+ENV HF_HOME=/root/.cache/huggingface
+
+ENTRYPOINT ["python3"]

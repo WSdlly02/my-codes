@@ -1,13 +1,13 @@
 # audio-process
 
-用于批量音频转写，分为本地 Whisper 路线和 Gemini 路线。
+用于批量音频转写，分为本地 qwen-asr 路线和 Gemini 路线。
 
 ## 文件说明
 
-- `trans-local.py`: 调用 `whisper.sh` 批量转写目录中的音频，默认输出到 `transcripts_local/`
+- `trans-local.py`: 批量把音频转为 `wav`，再通过 Docker 调用 `qwen-asr.py` 转写，默认输出到 `transcripts_local/`
 - `trans-genai.py`: 使用 Gemini 分片转写目录中的音频，默认输出到 `transcripts_genai/`
-- `whisper.sh`: 通过 Docker 启动 Whisper 运行环境
-- `Dockerfile.openai-whisper:*`: 本地构建 Whisper 镜像
+- `qwen-asr.py`: 容器内执行的单文件转写入口
+- `Dockerfile.qwen-asr:cpu`: 本地构建 qwen-asr 镜像
 - `.envrc`: 创建虚拟环境并安装 Python 依赖
 - `requirements.txt`: `trans-genai.py` 的 Python 依赖
 
@@ -15,7 +15,8 @@
 
 - 本地转写
   - Docker
-  - 可运行的 Whisper 镜像
+  - `ffmpeg`
+  - 可运行的 `qwen-asr:cpu` 镜像
 - Gemini 转写
   - `GEMINI_API_KEY`
   - `ffmpeg`
@@ -23,7 +24,7 @@
 
 ## 用法
 
-### 1. 本地 Whisper 批量转写
+### 1. 本地 qwen-asr 批量转写
 
 ```bash
 cd SOPs/audio-process
@@ -34,17 +35,19 @@ python trans-local.py /path/to/audio_dir
 
 ```bash
 python trans-local.py /path/to/audio_dir \
-  --model large-v3-turbo \
-  --language Chinese \
   --output-dir transcripts_local \
+  --wav-dir .qwen_asr_wavs \
+  --keep-wav \
   --force
 ```
 
 说明：
 
 - 输入目录下的音频会逐个处理
-- 默认读取 `whisper.sh`
-- 当输出格式为 `srt` 时，会自动整理成 `txt`
+- 脚本会先统一转成 16k 单声道 `wav`
+- 然后使用本地现成的 `qwen-asr:cpu` 镜像在容器中运行 `qwen-asr.py`
+- 如果本地不存在该镜像，脚本会直接失败，不会自动拉取或构建
+- 默认会保留一份 `xxx.txt`，同时额外保存 `xxx-raw-transcription.md`
 
 ### 2. Gemini 批量转写
 
