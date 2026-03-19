@@ -1,4 +1,4 @@
-package app
+package jwxt
 
 import (
 	"errors"
@@ -12,7 +12,7 @@ import (
 
 var reBodyMessage = regexp.MustCompile(`(?s)margin:auto;">\s*(.*?)\s*</br>`)
 
-func selectLesson(client *http.Client, profileID, lessonID string) (string, error) {
+func SelectLesson(client *http.Client, profileID, lessonID string) (string, error) {
 	elecSessionTime, err := fetchElecSessionTime(client, profileID)
 	if err != nil {
 		return "", err
@@ -20,7 +20,7 @@ func selectLesson(client *http.Client, profileID, lessonID string) (string, erro
 	return batchOperate(client, profileID, lessonID, elecSessionTime, true)
 }
 
-func dropLesson(client *http.Client, profileID, lessonID string) (string, error) {
+func DropLesson(client *http.Client, profileID, lessonID string) (string, error) {
 	return batchOperate(client, profileID, lessonID, "undefined", false)
 }
 
@@ -86,7 +86,7 @@ func fetchElecSessionTime(client *http.Client, profileID string) (string, error)
 	return serverTime.In(localTZ()).Format("20060102150405"), nil
 }
 
-func resolveLessonIDByName(mapping *lessonMappingCache, courseName string) (string, error) {
+func ResolveLessonIDByName(mapping *LessonMappingCache, courseName string) (string, error) {
 	key := normalizeIndexKey(courseName)
 	ids := mapping.ByName[key]
 	switch len(ids) {
@@ -99,7 +99,7 @@ func resolveLessonIDByName(mapping *lessonMappingCache, courseName string) (stri
 	}
 }
 
-func summarizeSelectionResponse(body string) string {
+func SummarizeSelectionResponse(body string) string {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return "空响应"
@@ -113,6 +113,6 @@ func summarizeSelectionResponse(body string) string {
 	return cleanHTML(body)
 }
 
-func selectionSucceeded(body string) bool {
-	return strings.Contains(summarizeSelectionResponse(body), "成功")
+func SelectionSucceeded(body string) bool {
+	return strings.Contains(SummarizeSelectionResponse(body), "成功")
 }

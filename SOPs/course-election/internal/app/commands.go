@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"course-election/internal/jwxt"
 )
 
 func runStatus(args []string) error {
@@ -12,18 +14,18 @@ func runStatus(args []string) error {
 		return err
 	}
 
-	client, cookies, err := clientFromSavedLogin()
+	client, cookies, err := jwxt.ClientFromSavedLogin()
 	if err != nil {
 		fmt.Println("cookieFile: missing")
 		return nil
 	}
 
 	fmt.Printf("cookieFile: present (%d cookies)\n", len(cookies))
-	for _, line := range cookieSummary(cookies) {
+	for _, line := range jwxt.CookieSummary(cookies) {
 		fmt.Println(line)
 	}
-	fmt.Printf("sessionValid: %t\n", isSessionValid(client))
-	fmt.Printf("channelsCache: %t\n", cacheExists(channelsCachePath()))
+	fmt.Printf("sessionValid: %t\n", jwxt.IsSessionValid(client))
+	fmt.Printf("channelsCache: %t\n", jwxt.CacheExists(jwxt.ChannelsCachePath()))
 	return nil
 }
 
@@ -33,12 +35,12 @@ func runWarmup(args []string) error {
 		return err
 	}
 
-	client, _, relogin, err := ensureLogin()
+	client, _, relogin, err := jwxt.EnsureLogin()
 	if err != nil {
 		return err
 	}
 
-	channels, err := fetchAndCacheChannels(client)
+	channels, err := jwxt.FetchAndCacheChannels(client)
 	if err != nil {
 		return err
 	}
@@ -48,7 +50,7 @@ func runWarmup(args []string) error {
 	} else {
 		fmt.Println("复用现有 Cookie")
 	}
-	fmt.Printf("已缓存 %d 个选课通道到 %s\n", len(channels), channelsCachePath())
+	fmt.Printf("已缓存 %d 个选课通道到 %s\n", len(channels), jwxt.ChannelsCachePath())
 	return nil
 }
 
@@ -70,21 +72,21 @@ func runSelect(args []string) error {
 		return errors.New("必须二选一传入 --lesson 或 --name")
 	}
 
-	client, _, err := clientFromSavedLogin()
+	client, _, err := jwxt.ClientFromSavedLogin()
 	if err != nil {
 		return err
 	}
-	if !isSessionValid(client) {
+	if !jwxt.IsSessionValid(client) {
 		return errors.New("当前 Cookie 无效，请先执行 warmup")
 	}
 
 	resolvedLessonID := *lessonID
 	if resolvedLessonID == "" {
-		mapping, err := loadLessonMappingCache(*profileID)
+		mapping, err := jwxt.LoadLessonMappingCache(*profileID)
 		if err != nil {
 			return fmt.Errorf("读取课程映射缓存失败: %w", err)
 		}
-		resolvedLessonID, err = resolveLessonIDByName(mapping, *courseName)
+		resolvedLessonID, err = jwxt.ResolveLessonIDByName(mapping, *courseName)
 		if err != nil {
 			return err
 		}
@@ -94,12 +96,12 @@ func runSelect(args []string) error {
 	attempt := 0
 	for {
 		attempt++
-		body, err := selectLesson(client, *profileID, resolvedLessonID)
+		body, err := jwxt.SelectLesson(client, *profileID, resolvedLessonID)
 		if err != nil {
 			fmt.Printf("[%d] 请求失败: %v\n", attempt, err)
 		} else {
-			fmt.Printf("[%d] %s\n", attempt, summarizeSelectionResponse(body))
-			if selectionSucceeded(body) {
+			fmt.Printf("[%d] %s\n", attempt, jwxt.SummarizeSelectionResponse(body))
+			if jwxt.SelectionSucceeded(body) {
 				return nil
 			}
 		}
@@ -129,21 +131,21 @@ func runDrop(args []string) error {
 		return errors.New("必须二选一传入 --lesson 或 --name")
 	}
 
-	client, _, err := clientFromSavedLogin()
+	client, _, err := jwxt.ClientFromSavedLogin()
 	if err != nil {
 		return err
 	}
-	if !isSessionValid(client) {
+	if !jwxt.IsSessionValid(client) {
 		return errors.New("当前 Cookie 无效，请先执行 warmup")
 	}
 
 	resolvedLessonID := *lessonID
 	if resolvedLessonID == "" {
-		mapping, err := loadLessonMappingCache(*profileID)
+		mapping, err := jwxt.LoadLessonMappingCache(*profileID)
 		if err != nil {
 			return fmt.Errorf("读取课程映射缓存失败: %w", err)
 		}
-		resolvedLessonID, err = resolveLessonIDByName(mapping, *courseName)
+		resolvedLessonID, err = jwxt.ResolveLessonIDByName(mapping, *courseName)
 		if err != nil {
 			return err
 		}
@@ -153,12 +155,12 @@ func runDrop(args []string) error {
 	attempt := 0
 	for {
 		attempt++
-		body, err := dropLesson(client, *profileID, resolvedLessonID)
+		body, err := jwxt.DropLesson(client, *profileID, resolvedLessonID)
 		if err != nil {
 			fmt.Printf("[%d] 请求失败: %v\n", attempt, err)
 		} else {
-			fmt.Printf("[%d] %s\n", attempt, summarizeSelectionResponse(body))
-			if selectionSucceeded(body) {
+			fmt.Printf("[%d] %s\n", attempt, jwxt.SummarizeSelectionResponse(body))
+			if jwxt.SelectionSucceeded(body) {
 				return nil
 			}
 		}

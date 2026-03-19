@@ -1,4 +1,4 @@
-package app
+package jwxt
 
 import (
 	"errors"
@@ -18,7 +18,7 @@ var (
 	reTag       = regexp.MustCompile(`<[^>]+>`)
 )
 
-func fetchAndCacheChannels(client *http.Client) ([]channelEntry, error) {
+func FetchAndCacheChannels(client *http.Client) ([]ChannelEntry, error) {
 	endpoint := baseURL + "/stdElectCourse.action"
 	resp, err := client.Get(endpoint)
 	if err != nil {
@@ -45,9 +45,9 @@ func fetchAndCacheChannels(client *http.Client) ([]channelEntry, error) {
 	return channels, nil
 }
 
-func parseChannels(html string) []channelEntry {
+func parseChannels(html string) []ChannelEntry {
 	matches := reRow.FindAllStringSubmatch(html, -1)
-	channels := make([]channelEntry, 0, len(matches))
+	channels := make([]ChannelEntry, 0, len(matches))
 	discoveredAt := now()
 
 	for _, match := range matches {
@@ -62,7 +62,7 @@ func parseChannels(html string) []channelEntry {
 			continue
 		}
 
-		entry := channelEntry{
+		entry := ChannelEntry{
 			RoundNo:      cleanHTML(cells[0][1]),
 			Name:         cleanHTML(cells[1][1]),
 			OpenTime:     cleanHTML(cells[2][1]),

@@ -1,4 +1,4 @@
-package app
+package jwxt
 
 import "time"
 
@@ -16,7 +16,7 @@ type savedCookie struct {
 	Secure   bool       `json:"secure,omitempty"`
 }
 
-type channelEntry struct {
+type ChannelEntry struct {
 	RoundNo      string     `json:"roundNo"`
 	Name         string     `json:"name"`
 	OpenTime     string     `json:"openTime"`
@@ -30,10 +30,10 @@ type channelEntry struct {
 type channelCache struct {
 	FetchedAt time.Time      `json:"fetchedAt"`
 	SourceURL string         `json:"sourceUrl"`
-	Channels  []channelEntry `json:"channels"`
+	Channels  []ChannelEntry `json:"channels"`
 }
 
-type lesson struct {
+type Lesson struct {
 	ID                 int           `json:"id"`
 	No                 string        `json:"no"`
 	Name               string        `json:"name"`
@@ -60,10 +60,10 @@ type lesson struct {
 	CampusName         string        `json:"campusName"`
 	AdminClass         string        `json:"adminClass"`
 	Remark             string        `json:"remark"`
-	ArrangeInfo        []arrangeInfo `json:"arrangeInfo"`
+	ArrangeInfo        []ArrangeInfo `json:"arrangeInfo"`
 }
 
-type arrangeInfo struct {
+type ArrangeInfo struct {
 	WeekDay   int    `json:"weekDay"`
 	WeekState string `json:"weekState"`
 	StartUnit int    `json:"startUnit"`
@@ -71,33 +71,33 @@ type arrangeInfo struct {
 	Rooms     string `json:"rooms"`
 }
 
-type lessonCount struct {
+type LessonCount struct {
 	Selected int `json:"sc"`
 	Limit    int `json:"lc"`
 	Reserved int `json:"wc"`
 }
 
-type lessonRef struct {
+type LessonRef struct {
 	ID   int    `json:"id"`
 	No   string `json:"no"`
 	Code string `json:"code"`
 	Name string `json:"name"`
 }
 
-type lessonMappingCache struct {
+type LessonMappingCache struct {
 	ProfileID  string               `json:"profileId"`
 	FetchedAt  time.Time            `json:"fetchedAt"`
 	SourceURL  string               `json:"sourceUrl"`
-	Lessons    []lesson             `json:"lessons"`
-	ByLessonID map[string]lessonRef `json:"byLessonId"`
+	Lessons    []Lesson             `json:"lessons"`
+	ByLessonID map[string]LessonRef `json:"byLessonId"`
 	ByName     map[string][]string  `json:"byName"`
 	ByCode     map[string][]string  `json:"byCode"`
 	ByTeacher  map[string][]string  `json:"byTeacher"`
 }
 
-type lessonCountSnapshot struct {
+type LessonCountSnapshot struct {
 	ProfileID string                 `json:"profileId"`
 	FetchedAt time.Time              `json:"fetchedAt"`
 	SourceURL string                 `json:"sourceUrl"`
-	Counts    map[string]lessonCount `json:"counts"`
+	Counts    map[string]LessonCount `json:"counts"`
 }

@@ -1,4 +1,4 @@
-package app
+package jwxt
 
 import (
 	"fmt"
@@ -13,7 +13,7 @@ func ensureCacheDir() error {
 	return os.MkdirAll(cacheDir, 0o755)
 }
 
-func channelsCachePath() string {
+func ChannelsCachePath() string {
 	return filepath.Join(cacheDir, "channels.json")
 }
 
@@ -82,7 +82,7 @@ func loadCookies() []*http.Cookie {
 	return cookies
 }
 
-func saveChannelCache(channels []channelEntry) error {
+func saveChannelCache(channels []ChannelEntry) error {
 	if err := ensureCacheDir(); err != nil {
 		return err
 	}
@@ -95,10 +95,10 @@ func saveChannelCache(channels []channelEntry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(channelsCachePath(), payload, 0o644)
+	return os.WriteFile(ChannelsCachePath(), payload, 0o644)
 }
 
-func saveLessonMappingCache(profileID string, data lessonMappingCache) error {
+func saveLessonMappingCache(profileID string, data LessonMappingCache) error {
 	if err := ensureCacheDir(); err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func saveLessonMappingCache(profileID string, data lessonMappingCache) error {
 	return os.WriteFile(mappingCachePath(profileID), payload, 0o644)
 }
 
-func saveLessonCountSnapshot(profileID string, data lessonCountSnapshot) error {
+func saveLessonCountSnapshot(profileID string, data LessonCountSnapshot) error {
 	if err := ensureCacheDir(); err != nil {
 		return err
 	}
@@ -120,36 +120,36 @@ func saveLessonCountSnapshot(profileID string, data lessonCountSnapshot) error {
 	return os.WriteFile(countsCachePath(profileID), payload, 0o644)
 }
 
-func loadLessonMappingCache(profileID string) (*lessonMappingCache, error) {
+func LoadLessonMappingCache(profileID string) (*LessonMappingCache, error) {
 	data, err := os.ReadFile(mappingCachePath(profileID))
 	if err != nil {
 		return nil, err
 	}
-	var cache lessonMappingCache
+	var cache LessonMappingCache
 	if err := sonic.Unmarshal(data, &cache); err != nil {
 		return nil, err
 	}
 	return &cache, nil
 }
 
-func loadLessonCountSnapshot(profileID string) (*lessonCountSnapshot, error) {
+func LoadLessonCountSnapshot(profileID string) (*LessonCountSnapshot, error) {
 	data, err := os.ReadFile(countsCachePath(profileID))
 	if err != nil {
 		return nil, err
 	}
-	var snap lessonCountSnapshot
+	var snap LessonCountSnapshot
 	if err := sonic.Unmarshal(data, &snap); err != nil {
 		return nil, err
 	}
 	return &snap, nil
 }
 
-func cacheExists(path string) bool {
+func CacheExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
 
-func cookieSummary(cookies []*http.Cookie) []string {
+func CookieSummary(cookies []*http.Cookie) []string {
 	lines := make([]string, 0, len(cookies))
 	for _, c := range cookies {
 		if c.Expires.IsZero() {

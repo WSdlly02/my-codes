@@ -1,4 +1,4 @@
-package app
+package jwxt
 
 import (
 	"fmt"
@@ -8,13 +8,13 @@ import (
 	"strings"
 )
 
-func buildLessonMappingCache(profileID string, lessons []lesson) lessonMappingCache {
-	cache := lessonMappingCache{
+func buildLessonMappingCache(profileID string, lessons []Lesson) LessonMappingCache {
+	cache := LessonMappingCache{
 		ProfileID:  profileID,
 		FetchedAt:  now(),
 		SourceURL:  fmt.Sprintf("%s/stdElectCourse!data.action?profileId=%s", baseURL, profileID),
 		Lessons:    lessons,
-		ByLessonID: make(map[string]lessonRef, len(lessons)),
+		ByLessonID: make(map[string]LessonRef, len(lessons)),
 		ByName:     map[string][]string{},
 		ByCode:     map[string][]string{},
 		ByTeacher:  map[string][]string{},
@@ -22,7 +22,7 @@ func buildLessonMappingCache(profileID string, lessons []lesson) lessonMappingCa
 
 	for _, lesson := range lessons {
 		id := fmt.Sprintf("%d", lesson.ID)
-		ref := lessonRef{
+		ref := LessonRef{
 			ID:   lesson.ID,
 			No:   lesson.No,
 			Code: lesson.Code,
@@ -49,8 +49,8 @@ func buildLessonMappingCache(profileID string, lessons []lesson) lessonMappingCa
 	return cache
 }
 
-func buildLessonCountSnapshot(profileID string, counts map[string]lessonCount) lessonCountSnapshot {
-	return lessonCountSnapshot{
+func buildLessonCountSnapshot(profileID string, counts map[string]LessonCount) LessonCountSnapshot {
+	return LessonCountSnapshot{
 		ProfileID: profileID,
 		FetchedAt: now(),
 		SourceURL: fmt.Sprintf("%s/stdElectCourse!queryStdCount.action?profileId=%s", baseURL, profileID),
@@ -58,7 +58,7 @@ func buildLessonCountSnapshot(profileID string, counts map[string]lessonCount) l
 	}
 }
 
-func fetchLessonMapping(client *http.Client, profileID string) ([]lesson, error) {
+func fetchLessonMapping(client *http.Client, profileID string) ([]Lesson, error) {
 	endpoint := fmt.Sprintf("%s/stdElectCourse!data.action?profileId=%s", baseURL, profileID)
 	raw, err := fetchPayload(client, endpoint)
 	if err != nil {
@@ -67,7 +67,7 @@ func fetchLessonMapping(client *http.Client, profileID string) ([]lesson, error)
 	return parseLessonPayload(raw)
 }
 
-func fetchLessonCounts(client *http.Client, profileID string) (map[string]lessonCount, error) {
+func fetchLessonCounts(client *http.Client, profileID string) (map[string]LessonCount, error) {
 	endpoint := fmt.Sprintf("%s/stdElectCourse!queryStdCount.action?profileId=%s", baseURL, profileID)
 	raw, err := fetchPayload(client, endpoint)
 	if err != nil {

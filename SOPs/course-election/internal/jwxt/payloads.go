@@ -1,4 +1,4 @@
-package app
+package jwxt
 
 import (
 	"bytes"
@@ -16,26 +16,26 @@ var (
 	reBareKey      = regexp.MustCompile(`([{\[,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)`)
 )
 
-func parseLessonPayload(raw []byte) ([]lesson, error) {
+func parseLessonPayload(raw []byte) ([]Lesson, error) {
 	jsonLike, err := normalizeJSLiteral(raw, reVarPrefix)
 	if err != nil {
 		return nil, err
 	}
 
-	var lessons []lesson
+	var lessons []Lesson
 	if err := sonic.Unmarshal(jsonLike, &lessons); err != nil {
 		return nil, err
 	}
 	return lessons, nil
 }
 
-func parseCountPayload(raw []byte) (map[string]lessonCount, error) {
+func parseCountPayload(raw []byte) (map[string]LessonCount, error) {
 	jsonLike, err := normalizeJSLiteral(raw, reCountPrefix)
 	if err != nil {
 		return nil, err
 	}
 
-	var counts map[string]lessonCount
+	var counts map[string]LessonCount
 	if err := sonic.Unmarshal(jsonLike, &counts); err != nil {
 		return nil, err
 	}
@@ -110,9 +110,10 @@ func jsSingleQuoteToJSON(s string) (string, error) {
 				escape = false
 				continue
 			}
-			if ch == '\\' {
+			switch ch {
+			case '\\':
 				escape = true
-			} else if ch == '"' {
+			case '"':
 				inDouble = false
 			}
 			continue

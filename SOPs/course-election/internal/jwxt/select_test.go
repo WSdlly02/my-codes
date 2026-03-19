@@ -1,15 +1,15 @@
-package app
+package jwxt
 
 import "testing"
 
 func TestResolveLessonIDByName(t *testing.T) {
-	cache := &lessonMappingCache{
+	cache := &LessonMappingCache{
 		ByName: map[string][]string{
 			"刑法学": {"244433"},
 		},
 	}
 
-	id, err := resolveLessonIDByName(cache, "刑法学")
+	id, err := ResolveLessonIDByName(cache, "刑法学")
 	if err != nil {
 		t.Fatalf("resolve lesson id: %v", err)
 	}
@@ -20,7 +20,7 @@ func TestResolveLessonIDByName(t *testing.T) {
 
 func TestSummarizeSelectionResponse(t *testing.T) {
 	body := `<html><body><div style="margin:auto;"> 选课成功 </br></div></body></html>`
-	msg := summarizeSelectionResponse(body)
+	msg := SummarizeSelectionResponse(body)
 	if msg != "选课成功" {
 		t.Fatalf("unexpected message: %q", msg)
 	}

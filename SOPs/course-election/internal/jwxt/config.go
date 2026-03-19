@@ -1,4 +1,4 @@
-package app
+package jwxt
 
 const (
 	baseURL          = "https://jwxt.shmtu.edu.cn/shmtu"

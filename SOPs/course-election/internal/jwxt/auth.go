@@ -1,4 +1,4 @@
-package app
+package jwxt
 
 import (
 	"context"
@@ -84,7 +84,7 @@ func buildClient(cookies []*http.Cookie) *http.Client {
 	}
 }
 
-func clientFromSavedLogin() (*http.Client, []*http.Cookie, error) {
+func ClientFromSavedLogin() (*http.Client, []*http.Cookie, error) {
 	cookies := loadCookies()
 	if len(cookies) == 0 {
 		return nil, nil, errors.New("未找到可用 Cookie")
@@ -92,9 +92,9 @@ func clientFromSavedLogin() (*http.Client, []*http.Cookie, error) {
 	return buildClient(cookies), cookies, nil
 }
 
-func ensureLogin() (*http.Client, []*http.Cookie, bool, error) {
-	client, cookies, err := clientFromSavedLogin()
-	if err == nil && isSessionValid(client) {
+func EnsureLogin() (*http.Client, []*http.Cookie, bool, error) {
+	client, cookies, err := ClientFromSavedLogin()
+	if err == nil && IsSessionValid(client) {
 		return client, cookies, false, nil
 	}
 
@@ -112,7 +112,7 @@ func ensureLogin() (*http.Client, []*http.Cookie, bool, error) {
 	return client, cookies, true, nil
 }
 
-func isSessionValid(client *http.Client) bool {
+func IsSessionValid(client *http.Client) bool {
 	resp, err := client.Get(baseURL + "/stdElectCourse.action")
 	if err != nil {
 		return false
