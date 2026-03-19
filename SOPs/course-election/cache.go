@@ -17,6 +17,14 @@ func channelsCachePath() string {
 	return filepath.Join(cacheDir, "channels.json")
 }
 
+func mappingCachePath(profileID string) string {
+	return filepath.Join(cacheDir, "mapping_"+profileID+".json")
+}
+
+func countsCachePath(profileID string) string {
+	return filepath.Join(cacheDir, "counts_"+profileID+".json")
+}
+
 func saveCookies(cookies []*http.Cookie) error {
 	sc := savedCookies{}
 	for _, c := range cookies {
@@ -88,6 +96,52 @@ func saveChannelCache(channels []channelEntry) error {
 		return err
 	}
 	return os.WriteFile(channelsCachePath(), payload, 0o644)
+}
+
+func saveLessonMappingCache(profileID string, data lessonMappingCache) error {
+	if err := ensureCacheDir(); err != nil {
+		return err
+	}
+	payload, err := sonic.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(mappingCachePath(profileID), payload, 0o644)
+}
+
+func saveLessonCountSnapshot(profileID string, data lessonCountSnapshot) error {
+	if err := ensureCacheDir(); err != nil {
+		return err
+	}
+	payload, err := sonic.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(countsCachePath(profileID), payload, 0o644)
+}
+
+func loadLessonMappingCache(profileID string) (*lessonMappingCache, error) {
+	data, err := os.ReadFile(mappingCachePath(profileID))
+	if err != nil {
+		return nil, err
+	}
+	var cache lessonMappingCache
+	if err := sonic.Unmarshal(data, &cache); err != nil {
+		return nil, err
+	}
+	return &cache, nil
+}
+
+func loadLessonCountSnapshot(profileID string) (*lessonCountSnapshot, error) {
+	data, err := os.ReadFile(countsCachePath(profileID))
+	if err != nil {
+		return nil, err
+	}
+	var snap lessonCountSnapshot
+	if err := sonic.Unmarshal(data, &snap); err != nil {
+		return nil, err
+	}
+	return &snap, nil
 }
 
 func cacheExists(path string) bool {

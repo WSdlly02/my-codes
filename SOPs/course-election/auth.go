@@ -113,10 +113,17 @@ func ensureLogin() (*http.Client, []*http.Cookie, bool, error) {
 }
 
 func isSessionValid(client *http.Client) bool {
-	resp, err := client.Get(baseURL + "/stdElectCourse!defaultPage.action")
+	resp, err := client.Get(baseURL + "/stdElectCourse.action")
 	if err != nil {
 		return false
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode != http.StatusFound
+
+	if resp.StatusCode == http.StatusFound {
+		location := strings.ToLower(resp.Header.Get("Location"))
+		if strings.Contains(location, "login") || strings.Contains(location, "cas") || strings.Contains(location, "sso") {
+			return false
+		}
+	}
+	return resp.StatusCode == http.StatusOK
 }
