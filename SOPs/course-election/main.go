@@ -21,6 +21,10 @@ func main() {
 		if err := runSelect(os.Args[2:]); err != nil {
 			fatal(err)
 		}
+	case "drop":
+		if err := runDrop(os.Args[2:]); err != nil {
+			fatal(err)
+		}
 	default:
 		usage()
 		os.Exit(1)

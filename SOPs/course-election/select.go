@@ -17,12 +17,21 @@ func selectLesson(client *http.Client, profileID, lessonID string) (string, erro
 	if err != nil {
 		return "", err
 	}
+	return batchOperate(client, profileID, lessonID, elecSessionTime, true)
+}
+
+func dropLesson(client *http.Client, profileID, lessonID string) (string, error) {
+	return batchOperate(client, profileID, lessonID, "undefined", false)
+}
+
+func batchOperate(client *http.Client, profileID, lessonID, elecSessionTime string, selectMode bool) (string, error) {
+	operatorValue := lessonID + ":false"
+	if selectMode {
+		operatorValue = lessonID + ":true:0"
+	}
 
 	form := url.Values{
-		"optype":                     {"true"},
-		"operator0":                  {lessonID + ":true:0"},
-		"lesson0":                    {lessonID},
-		"schLessonGroup_" + lessonID: {"undefined"},
+		"operator0": {operatorValue},
 	}
 
 	endpoint := fmt.Sprintf(
