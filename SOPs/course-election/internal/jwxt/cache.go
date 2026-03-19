@@ -5,9 +5,23 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/bytedance/sonic"
 )
+
+type LessonMappingCacheStatus struct {
+	ProfileID   string
+	LessonCount int
+	FetchedAt   string
+}
+
+type LessonCountCacheStatus struct {
+	ProfileID  string
+	CountCount int
+	FetchedAt  string
+}
 
 func ensureCacheDir() error {
 	return os.MkdirAll(cacheDir, 0o755)
@@ -26,6 +40,10 @@ func CountsCachePath(profileID string) string {
 }
 
 func saveCookies(cookies []*http.Cookie) error {
+	if err := ensureCacheDir(); err != nil {
+		return err
+	}
+
 	sc := savedCookies{}
 	for _, c := range cookies {
 		item := savedCookie{
@@ -158,6 +176,68 @@ func CacheExists(path string) bool {
 	return err == nil
 }
 
+func ListLessonMappingCacheStatuses() ([]LessonMappingCacheStatus, error) {
+	paths, err := filepath.Glob(filepath.Join(cacheDir, "mapping_*.json"))
+	if err != nil {
+		return nil, err
+	}
+
+	statuses := make([]LessonMappingCacheStatus, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+
+		var cache LessonMappingCache
+		if err := sonic.Unmarshal(data, &cache); err != nil {
+			return nil, err
+		}
+
+		statuses = append(statuses, LessonMappingCacheStatus{
+			ProfileID:   firstNonEmpty(cache.ProfileID, profileIDFromPath(path, "mapping_")),
+			LessonCount: len(cache.Lessons),
+			FetchedAt:   cache.FetchedAt.In(localTZ()).Format(timeLayout),
+		})
+	}
+
+	sort.Slice(statuses, func(i, j int) bool {
+		return statuses[i].ProfileID < statuses[j].ProfileID
+	})
+	return statuses, nil
+}
+
+func ListLessonCountCacheStatuses() ([]LessonCountCacheStatus, error) {
+	paths, err := filepath.Glob(filepath.Join(cacheDir, "counts_*.json"))
+	if err != nil {
+		return nil, err
+	}
+
+	statuses := make([]LessonCountCacheStatus, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+
+		var cache LessonCountSnapshot
+		if err := sonic.Unmarshal(data, &cache); err != nil {
+			return nil, err
+		}
+
+		statuses = append(statuses, LessonCountCacheStatus{
+			ProfileID:  firstNonEmpty(cache.ProfileID, profileIDFromPath(path, "counts_")),
+			CountCount: len(cache.Counts),
+			FetchedAt:  cache.FetchedAt.In(localTZ()).Format(timeLayout),
+		})
+	}
+
+	sort.Slice(statuses, func(i, j int) bool {
+		return statuses[i].ProfileID < statuses[j].ProfileID
+	})
+	return statuses, nil
+}
+
 func CookieSummary(cookies []*http.Cookie) []string {
 	lines := make([]string, 0, len(cookies))
 	for _, c := range cookies {
@@ -168,4 +248,19 @@ func CookieSummary(cookies []*http.Cookie) []string {
 		lines = append(lines, fmt.Sprintf("%s: expires at %s", c.Name, c.Expires.In(localTZ()).Format(timeLayout)))
 	}
 	return lines
+}
+
+func profileIDFromPath(path, prefix string) string {
+	base := filepath.Base(path)
+	name := strings.TrimSuffix(base, filepath.Ext(base))
+	return strings.TrimPrefix(name, prefix)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

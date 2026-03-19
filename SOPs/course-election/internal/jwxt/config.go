@@ -5,4 +5,5 @@ const (
 	defaultTimeout = 10
 	cacheDir       = "cache"
 	cookieFile     = cacheDir + "/cookies.json"
+	chromeProfile  = "./chrome-profile"
 )

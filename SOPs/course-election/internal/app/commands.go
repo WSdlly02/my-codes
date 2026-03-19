@@ -17,15 +17,33 @@ func runStatus(args []string) error {
 	client, cookies, err := jwxt.ClientFromSavedLogin()
 	if err != nil {
 		fmt.Println("cookieFile: missing")
-		return nil
+	} else {
+		fmt.Printf("cookieFile: present (%d cookies)\n", len(cookies))
+		for _, line := range jwxt.CookieSummary(cookies) {
+			fmt.Println(line)
+		}
+		fmt.Printf("sessionValid: %t\n", jwxt.IsSessionValid(client))
 	}
 
-	fmt.Printf("cookieFile: present (%d cookies)\n", len(cookies))
-	for _, line := range jwxt.CookieSummary(cookies) {
-		fmt.Println(line)
-	}
-	fmt.Printf("sessionValid: %t\n", jwxt.IsSessionValid(client))
 	fmt.Printf("channelsCache: %t\n", jwxt.CacheExists(jwxt.ChannelsCachePath()))
+
+	mappingStatuses, mappingErr := jwxt.ListLessonMappingCacheStatuses()
+	if mappingErr != nil {
+		return fmt.Errorf("读取 mapping 缓存状态失败: %w", mappingErr)
+	}
+	fmt.Printf("mappingCaches: %d\n", len(mappingStatuses))
+	for _, status := range mappingStatuses {
+		fmt.Printf("mapping[%s]: %d lessons, fetched at %s\n", status.ProfileID, status.LessonCount, status.FetchedAt)
+	}
+
+	countStatuses, countErr := jwxt.ListLessonCountCacheStatuses()
+	if countErr != nil {
+		return fmt.Errorf("读取 counts 缓存状态失败: %w", countErr)
+	}
+	fmt.Printf("countsCaches: %d\n", len(countStatuses))
+	for _, status := range countStatuses {
+		fmt.Printf("counts[%s]: %d entries, fetched at %s\n", status.ProfileID, status.CountCount, status.FetchedAt)
+	}
 	return nil
 }
 

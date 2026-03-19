@@ -8,15 +8,25 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
+var cookieFileMu sync.Mutex
+
+type persistentJar struct {
+	inner   *cookiejar.Jar
+	baseURL *url.URL
+	store   map[string]*http.Cookie
+}
+
 func getCookiesViaBrowser() ([]*http.Cookie, error) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", false),
+		chromedp.UserDataDir(chromeProfile),
 	)
 	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	defer cancel()
@@ -71,9 +81,8 @@ func getCookiesViaBrowser() ([]*http.Cookie, error) {
 }
 
 func buildClient(cookies []*http.Cookie) *http.Client {
-	jar, _ := cookiejar.New(nil)
 	u, _ := url.Parse(baseURL)
-	jar.SetCookies(u, cookies)
+	jar, _ := newPersistentJar(u, cookies)
 
 	return &http.Client{
 		Jar:     jar,
@@ -82,6 +91,66 @@ func buildClient(cookies []*http.Cookie) *http.Client {
 			return http.ErrUseLastResponse
 		},
 	}
+}
+
+func newPersistentJar(base *url.URL, cookies []*http.Cookie) (*persistentJar, error) {
+	inner, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	jar := &persistentJar{
+		inner:   inner,
+		baseURL: base,
+		store:   map[string]*http.Cookie{},
+	}
+	if len(cookies) > 0 {
+		jar.SetCookies(base, cookies)
+	}
+	return jar, nil
+}
+
+func (j *persistentJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	j.inner.SetCookies(u, cookies)
+	if j.baseURL == nil {
+		return
+	}
+
+	cookieFileMu.Lock()
+	defer cookieFileMu.Unlock()
+	for _, cookie := range cookies {
+		key := cookieKey(cookie)
+		if cookie.MaxAge < 0 || (!cookie.Expires.IsZero() && cookie.Expires.Before(now())) {
+			delete(j.store, key)
+			continue
+		}
+		j.store[key] = cloneCookie(cookie)
+	}
+	_ = saveCookies(j.snapshot())
+}
+
+func (j *persistentJar) Cookies(u *url.URL) []*http.Cookie {
+	return j.inner.Cookies(u)
+}
+
+func (j *persistentJar) snapshot() []*http.Cookie {
+	cookies := make([]*http.Cookie, 0, len(j.store))
+	for _, cookie := range j.store {
+		cookies = append(cookies, cloneCookie(cookie))
+	}
+	return cookies
+}
+
+func cookieKey(cookie *http.Cookie) string {
+	return strings.Join([]string{cookie.Name, cookie.Domain, cookie.Path}, "\x00")
+}
+
+func cloneCookie(cookie *http.Cookie) *http.Cookie {
+	if cookie == nil {
+		return nil
+	}
+	clone := *cookie
+	return &clone
 }
 
 func ClientFromSavedLogin() (*http.Client, []*http.Cookie, error) {
@@ -104,9 +173,6 @@ func EnsureLogin() (*http.Client, []*http.Cookie, bool, error) {
 	}
 	if len(cookies) == 0 {
 		return nil, nil, false, errors.New("未获取到任何 Cookie")
-	}
-	if err := saveCookies(cookies); err != nil {
-		return nil, nil, false, fmt.Errorf("保存 Cookie 失败: %w", err)
 	}
 	client = buildClient(cookies)
 	return client, cookies, true, nil
