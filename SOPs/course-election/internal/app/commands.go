@@ -29,6 +29,73 @@ func runStatus(args []string) error {
 	return nil
 }
 
+func runQuery(args []string) error {
+	fs := newFlagSet("query")
+	profileID := fs.String("profile", "", "选课通道 profileID")
+	nameFilter := fs.String("name", "", "课程名称关键词")
+	lessonIDFilter := fs.String("lesson-id", "", "课程ID")
+	codeFilter := fs.String("code", "", "课程号")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	client, _, err := jwxt.ClientFromSavedLogin()
+	sessionValid := false
+	if err == nil && jwxt.IsSessionValid(client) {
+		sessionValid = true
+	} else {
+		client = nil
+	}
+
+	if *profileID == "" {
+		var channels []jwxt.ChannelEntry
+		if sessionValid {
+			channels, err = jwxt.LoadOrFetchChannels(client)
+		} else {
+			cache, cacheErr := jwxt.LoadChannelCache()
+			if cacheErr != nil {
+				return errors.New("当前 Cookie 无效，且本地没有通道缓存，请先执行 warmup")
+			}
+			channels = cache.Channels
+		}
+		if err != nil {
+			return err
+		}
+		for _, ch := range channels {
+			state := "未开放"
+			if ch.Opened {
+				state = "已开放"
+			}
+			line := fmt.Sprintf("[%s] %s | profile=%s | %s", ch.RoundNo, ch.Name, ch.ProfileID, state)
+			if ch.OpenTime != "" {
+				line += " | " + ch.OpenTime
+			}
+			fmt.Println(line)
+		}
+		return nil
+	}
+
+	mapping, counts, countsFromCache, err := jwxt.QueryCourseData(client, *profileID)
+	if err != nil {
+		return err
+	}
+
+	filter := lessonQueryFilter{
+		Name:     *nameFilter,
+		LessonID: *lessonIDFilter,
+		Code:     *codeFilter,
+	}
+	entries := buildLessonDisplayEntries(mapping, counts, filter)
+	for i, entry := range entries {
+		fmt.Print(formatLessonDisplayEntry(i+1, entry))
+	}
+	fmt.Printf("共 %d 门课程\n", len(entries))
+	if countsFromCache && counts != nil {
+		fmt.Printf("警告：容量数据获取失败，使用本地副本：%s，数据可能不准确\n", counts.FetchedAt.Format("2006-01-02 15:04:05"))
+	}
+	return nil
+}
+
 func runWarmup(args []string) error {
 	fs := newFlagSet("warmup")
 	if err := fs.Parse(args); err != nil {
@@ -57,8 +124,8 @@ func runWarmup(args []string) error {
 func runSelect(args []string) error {
 	fs := newFlagSet("select")
 	profileID := fs.String("profile", "", "选课通道 profileID")
-	lessonID := fs.String("lesson", "", "课程 lessonID")
-	courseName := fs.String("name", "", "课程名称，将从映射缓存里解析到 lessonID")
+	lessonID := fs.String("lesson-id", "", "课程ID")
+	courseName := fs.String("name", "", "课程名称，将从映射缓存里解析到课程ID")
 	retry := fs.Int("retry", 1, "最大尝试次数，0 表示无限重试")
 	interval := fs.Duration("interval", 500*time.Millisecond, "重试间隔")
 	if err := fs.Parse(args); err != nil {
@@ -69,7 +136,7 @@ func runSelect(args []string) error {
 		return errors.New("缺少 --profile")
 	}
 	if (*lessonID == "" && *courseName == "") || (*lessonID != "" && *courseName != "") {
-		return errors.New("必须二选一传入 --lesson 或 --name")
+		return errors.New("必须二选一传入 --lesson-id 或 --name")
 	}
 
 	client, _, err := jwxt.ClientFromSavedLogin()
@@ -116,8 +183,8 @@ func runSelect(args []string) error {
 func runDrop(args []string) error {
 	fs := newFlagSet("drop")
 	profileID := fs.String("profile", "", "选课通道 profileID")
-	lessonID := fs.String("lesson", "", "课程 lessonID")
-	courseName := fs.String("name", "", "课程名称，将从映射缓存里解析到 lessonID")
+	lessonID := fs.String("lesson-id", "", "课程ID")
+	courseName := fs.String("name", "", "课程名称，将从映射缓存里解析到课程ID")
 	retry := fs.Int("retry", 1, "最大尝试次数，0 表示无限重试")
 	interval := fs.Duration("interval", 500*time.Millisecond, "重试间隔")
 	if err := fs.Parse(args); err != nil {
@@ -128,7 +195,7 @@ func runDrop(args []string) error {
 		return errors.New("缺少 --profile")
 	}
 	if (*lessonID == "" && *courseName == "") || (*lessonID != "" && *courseName != "") {
-		return errors.New("必须二选一传入 --lesson 或 --name")
+		return errors.New("必须二选一传入 --lesson-id 或 --name")
 	}
 
 	client, _, err := jwxt.ClientFromSavedLogin()

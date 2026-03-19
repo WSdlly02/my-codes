@@ -17,11 +17,11 @@ func ChannelsCachePath() string {
 	return filepath.Join(cacheDir, "channels.json")
 }
 
-func mappingCachePath(profileID string) string {
+func MappingCachePath(profileID string) string {
 	return filepath.Join(cacheDir, "mapping_"+profileID+".json")
 }
 
-func countsCachePath(profileID string) string {
+func CountsCachePath(profileID string) string {
 	return filepath.Join(cacheDir, "counts_"+profileID+".json")
 }
 
@@ -52,9 +52,6 @@ func saveCookies(cookies []*http.Cookie) error {
 
 func loadCookies() []*http.Cookie {
 	data, err := os.ReadFile(cookieFile)
-	if err != nil {
-		data, err = os.ReadFile(legacyCookieFile)
-	}
 	if err != nil {
 		return nil
 	}
@@ -106,7 +103,7 @@ func saveLessonMappingCache(profileID string, data LessonMappingCache) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(mappingCachePath(profileID), payload, 0o644)
+	return os.WriteFile(MappingCachePath(profileID), payload, 0o644)
 }
 
 func saveLessonCountSnapshot(profileID string, data LessonCountSnapshot) error {
@@ -117,11 +114,11 @@ func saveLessonCountSnapshot(profileID string, data LessonCountSnapshot) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(countsCachePath(profileID), payload, 0o644)
+	return os.WriteFile(CountsCachePath(profileID), payload, 0o644)
 }
 
 func LoadLessonMappingCache(profileID string) (*LessonMappingCache, error) {
-	data, err := os.ReadFile(mappingCachePath(profileID))
+	data, err := os.ReadFile(MappingCachePath(profileID))
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +130,7 @@ func LoadLessonMappingCache(profileID string) (*LessonMappingCache, error) {
 }
 
 func LoadLessonCountSnapshot(profileID string) (*LessonCountSnapshot, error) {
-	data, err := os.ReadFile(countsCachePath(profileID))
+	data, err := os.ReadFile(CountsCachePath(profileID))
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +139,18 @@ func LoadLessonCountSnapshot(profileID string) (*LessonCountSnapshot, error) {
 		return nil, err
 	}
 	return &snap, nil
+}
+
+func LoadChannelCache() (*channelCache, error) {
+	data, err := os.ReadFile(ChannelsCachePath())
+	if err != nil {
+		return nil, err
+	}
+	var cache channelCache
+	if err := sonic.Unmarshal(data, &cache); err != nil {
+		return nil, err
+	}
+	return &cache, nil
 }
 
 func CacheExists(path string) bool {

@@ -11,6 +11,10 @@ func Run(args []string) int {
 		if err := runStatus(args[1:]); err != nil {
 			fatal(err)
 		}
+	case "query":
+		if err := runQuery(args[1:]); err != nil {
+			fatal(err)
+		}
 	case "warmup":
 		if err := runWarmup(args[1:]); err != nil {
 			fatal(err)

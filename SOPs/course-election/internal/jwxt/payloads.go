@@ -44,6 +44,9 @@ func parseCountPayload(raw []byte) (map[string]LessonCount, error) {
 
 func normalizeJSLiteral(raw []byte, prefix *regexp.Regexp) ([]byte, error) {
 	text := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(strings.ToLower(text), "<!doctype html") || strings.HasPrefix(strings.ToLower(text), "<html") {
+		return nil, errors.New("接口返回了 HTML 页面而不是课程数据，通常表示当前 profile 尚未建立上下文、未开放，或服务端返回了错误页")
+	}
 	text = reBlockComment.ReplaceAllString(text, "")
 	text = strings.TrimSpace(prefix.ReplaceAllString(text, ""))
 	text = strings.TrimSuffix(text, ";")

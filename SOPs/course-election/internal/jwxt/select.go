@@ -63,16 +63,11 @@ func batchOperate(client *http.Client, profileID, lessonID, elecSessionTime stri
 }
 
 func fetchElecSessionTime(client *http.Client, profileID string) (string, error) {
-	endpoint := fmt.Sprintf("%s/stdElectCourse!defaultPage.action?electionProfile.id=%s", baseURL, url.QueryEscape(profileID))
-	resp, err := client.Get(endpoint)
+	resp, err := fetchDefaultPage(client, profileID)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusFound {
-		return "", errors.New("defaultPage 被重定向，登录态或通道状态可能无效")
-	}
 
 	dateHeader := resp.Header.Get("Date")
 	if dateHeader == "" {
@@ -84,6 +79,19 @@ func fetchElecSessionTime(client *http.Client, profileID string) (string, error)
 		return "", fmt.Errorf("解析 Date 失败: %w", err)
 	}
 	return serverTime.In(localTZ()).Format("20060102150405"), nil
+}
+
+func fetchDefaultPage(client *http.Client, profileID string) (*http.Response, error) {
+	endpoint := fmt.Sprintf("%s/stdElectCourse!defaultPage.action?electionProfile.id=%s", baseURL, url.QueryEscape(profileID))
+	resp, err := client.Get(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusFound {
+		resp.Body.Close()
+		return nil, errors.New("defaultPage 被重定向，登录态或通道状态可能无效")
+	}
+	return resp, nil
 }
 
 func ResolveLessonIDByName(mapping *LessonMappingCache, courseName string) (string, error) {

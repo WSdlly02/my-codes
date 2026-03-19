@@ -45,6 +45,14 @@ func FetchAndCacheChannels(client *http.Client) ([]ChannelEntry, error) {
 	return channels, nil
 }
 
+func LoadOrFetchChannels(client *http.Client) ([]ChannelEntry, error) {
+	cache, err := LoadChannelCache()
+	if err == nil && len(cache.Channels) > 0 {
+		return cache.Channels, nil
+	}
+	return FetchAndCacheChannels(client)
+}
+
 func parseChannels(html string) []ChannelEntry {
 	matches := reRow.FindAllStringSubmatch(html, -1)
 	channels := make([]ChannelEntry, 0, len(matches))
