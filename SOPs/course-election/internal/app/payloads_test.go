@@ -1,12 +1,17 @@
-package main
+package app
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
+func fixturePath(name string) string {
+	return filepath.Join("..", "..", name)
+}
+
 func TestParseLessonPayload(t *testing.T) {
-	raw, err := os.ReadFile("stdElectCourse!data.action.json")
+	raw, err := os.ReadFile(fixturePath("stdElectCourse!data.action.json"))
 	if err != nil {
 		t.Fatalf("read payload: %v", err)
 	}
@@ -24,7 +29,7 @@ func TestParseLessonPayload(t *testing.T) {
 }
 
 func TestParseCountPayload(t *testing.T) {
-	raw, err := os.ReadFile("stdElectCourse!queryStdCount.action.json")
+	raw, err := os.ReadFile(fixturePath("stdElectCourse!queryStdCount.action.json"))
 	if err != nil {
 		t.Fatalf("read payload: %v", err)
 	}
@@ -42,7 +47,7 @@ func TestParseCountPayload(t *testing.T) {
 }
 
 func TestBuildLessonMappingCache(t *testing.T) {
-	raw, err := os.ReadFile("stdElectCourse!data.action.json")
+	raw, err := os.ReadFile(fixturePath("stdElectCourse!data.action.json"))
 	if err != nil {
 		t.Fatalf("read payload: %v", err)
 	}
@@ -71,7 +76,7 @@ func TestBuildLessonMappingCache(t *testing.T) {
 }
 
 func TestBuildLessonCountSnapshot(t *testing.T) {
-	raw, err := os.ReadFile("stdElectCourse!queryStdCount.action.json")
+	raw, err := os.ReadFile(fixturePath("stdElectCourse!queryStdCount.action.json"))
 	if err != nil {
 		t.Fatalf("read payload: %v", err)
 	}

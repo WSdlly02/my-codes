@@ -1,4 +1,4 @@
-package main
+package app
 
 const (
 	baseURL          = "https://jwxt.shmtu.edu.cn/shmtu"
