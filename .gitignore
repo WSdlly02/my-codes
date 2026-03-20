@@ -12,6 +12,8 @@
 *.pyc
 *.log
 *.exe
+*.ics
+*.png
 __pycache__/
 .vscode/
 cache/

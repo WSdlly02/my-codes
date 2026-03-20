@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -19,9 +20,17 @@ const (
 	FirstDayOfSemester = "2026-03-09" // 2026年春季学期第一天
 	DefaultOCRModel    = "qwen3-vl:8b-instruct"
 	DefaultOllamaURL   = "http://localhost:11434/api/generate"
-	CacheFilePath      = "/home/wsdlly02/Documents/my-codes/SOPs/course-election/cache/mapping_2947.json"
 	AlarmMinutesBefore = 20
+	CourseElectionBin  = "/home/wsdlly02/Documents/my-codes/SOPs/course-election/course-election"
 )
+
+var CacheFilePaths = []string{
+	"/home/wsdlly02/Documents/my-codes/SOPs/course-election/cache/mapping_2947.json",
+	"/home/wsdlly02/Documents/my-codes/SOPs/course-election/cache/mapping_2948.json",
+	"/home/wsdlly02/Documents/my-codes/SOPs/course-election/cache/mapping_2938.json",
+	"/home/wsdlly02/Documents/my-codes/SOPs/course-election/cache/mapping_2988.json",
+	"/home/wsdlly02/Documents/my-codes/SOPs/course-election/cache/mapping_2969.json",
+}
 
 func main() {
 	// step1: 读取课程表图片，OCR 识别课程信息-> 返回json 数组，元素为课序号
@@ -44,9 +53,30 @@ func main() {
 		log.Fatalf("OCR 识别失败: %v", err)
 	}
 	// 从缓存文件中查询课程信息
-	courseInfo, err := queryCourseInfoFromCache(courseNos, CacheFilePath)
+	courseInfo, missingCourseNos, err := queryCourseInfoFromCache(courseNos, CacheFilePaths)
 	if err != nil {
 		log.Fatalf("查询课程信息失败: %v", err)
+	}
+	if string(missingCourseNos) != "[]" {
+		log.Printf("存在未命中的课序号，待后续处理: %s", string(missingCourseNos))
+		extraCourseInfo, unresolvedCourseNos, err := queryMissingCourseInfoFromTeachTask(missingCourseNos)
+		if err != nil {
+			log.Fatalf("补查缺失课序号失败: %v", err)
+		}
+		queriedCourseNos, err := extractCourseNosFromCourseInfo(extraCourseInfo)
+		if err != nil {
+			log.Fatalf("提取补查成功的课序号失败: %v", err)
+		}
+		if string(queriedCourseNos) != "[]" {
+			log.Printf("已查询到未命中的课序号：%s", string(queriedCourseNos))
+		}
+		courseInfo, err = mergeCourseInfo(courseInfo, extraCourseInfo)
+		if err != nil {
+			log.Fatalf("合并课程信息失败: %v", err)
+		}
+		if string(unresolvedCourseNos) != "[]" {
+			log.Printf("警告: 这些课序号进一步查询后仍未解析到课程信息: %s", string(unresolvedCourseNos))
+		}
 	}
 	// 将课程信息转换为 ICS 格式
 	icsContent, err := generateICSFromCourseInfo(courseInfo, FirstDayOfSemester, Timezone)
@@ -206,24 +236,37 @@ func normalizeCourseNos(items []string) []string {
 	return normalized
 }
 
-func queryCourseInfoFromCache(courseNos json.RawMessage, mappingPath string) (json.RawMessage, error) {
+func queryCourseInfoFromCache(courseNos json.RawMessage, mappingPaths []string) (json.RawMessage, json.RawMessage, error) {
 	var nos []string
 	if err := json.Unmarshal(courseNos, &nos); err != nil {
-		return nil, fmt.Errorf("解析课序号 JSON 失败: %w", err)
+		return nil, nil, fmt.Errorf("解析课序号 JSON 失败: %w", err)
 	}
 	nos = normalizeCourseNos(nos)
 	if len(nos) == 0 {
-		return nil, fmt.Errorf("课序号列表为空")
+		return nil, nil, fmt.Errorf("课序号列表为空")
+	}
+	if len(mappingPaths) == 0 {
+		return nil, nil, fmt.Errorf("课程缓存路径列表为空")
 	}
 
-	mapping, err := loadLessonMappingCache(mappingPath)
-	if err != nil {
-		return nil, err
+	byNo := make(map[string]Lesson)
+	duplicateNos := make([]string, 0)
+	for _, mappingPath := range mappingPaths {
+		mapping, err := loadLessonMappingCache(mappingPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, item := range mapping.Lessons {
+			if _, exists := byNo[item.No]; exists {
+				duplicateNos = append(duplicateNos, item.No)
+				continue
+			}
+			byNo[item.No] = item
+		}
 	}
 
-	byNo := make(map[string]Lesson, len(mapping.Lessons))
-	for _, item := range mapping.Lessons {
-		byNo[item.No] = item
+	if len(duplicateNos) > 0 {
+		log.Printf("警告: 多个缓存文件中存在重复课序号，已使用首次命中的记录: %s", strings.Join(normalizeCourseNos(duplicateNos), ", "))
 	}
 
 	matched := make([]Lesson, 0, len(nos))
@@ -239,17 +282,20 @@ func queryCourseInfoFromCache(courseNos json.RawMessage, mappingPath string) (js
 	if len(missing) > 0 {
 		log.Printf("警告: 缓存中未找到这些课序号，已跳过: %s", strings.Join(missing, ", "))
 	}
-	if len(missing) > 0 {
-		if len(matched) == 0 {
-			return nil, fmt.Errorf("缓存中未找到任何课序号: %s", strings.Join(missing, ", "))
-		}
+
+	matchedJSON, err := json.Marshal(matched)
+	if err != nil {
+		return nil, nil, fmt.Errorf("序列化课程信息失败: %w", err)
+	}
+	missingJSON, err := json.Marshal(missing)
+	if err != nil {
+		return nil, nil, fmt.Errorf("序列化缺失课序号失败: %w", err)
+	}
+	if len(matched) == 0 {
+		return nil, json.RawMessage(missingJSON), fmt.Errorf("缓存中未找到任何课序号: %s", strings.Join(missing, ", "))
 	}
 
-	result, err := json.Marshal(matched)
-	if err != nil {
-		return nil, fmt.Errorf("序列化课程信息失败: %w", err)
-	}
-	return json.RawMessage(result), nil
+	return json.RawMessage(matchedJSON), json.RawMessage(missingJSON), nil
 }
 
 func loadLessonMappingCache(path string) (*LessonMappingCache, error) {
@@ -266,4 +312,159 @@ func loadLessonMappingCache(path string) (*LessonMappingCache, error) {
 		return nil, fmt.Errorf("课程缓存为空: %s", path)
 	}
 	return &mapping, nil
+}
+
+func queryMissingCourseInfoFromTeachTask(courseNos json.RawMessage) (json.RawMessage, json.RawMessage, error) {
+	var nos []string
+	if err := json.Unmarshal(courseNos, &nos); err != nil {
+		return nil, nil, fmt.Errorf("解析待补查课序号失败: %w", err)
+	}
+	nos = normalizeCourseNos(nos)
+	if len(nos) == 0 {
+		empty := json.RawMessage("[]")
+		return empty, empty, nil
+	}
+
+	extraLessons := make([]Lesson, 0)
+	unresolved := make([]string, 0)
+	for _, no := range nos {
+		html, err := queryTeachTaskHTML(no)
+		if err != nil {
+			log.Printf("警告: 查询课序号 %s 的 teach-task HTML 失败: %v", no, err)
+			unresolved = append(unresolved, no)
+			continue
+		}
+
+		parsed, err := ParseTeachTaskHTML(html)
+		if err != nil {
+			log.Printf("警告: 解析课序号 %s 的 teach-task HTML 失败: %v", no, err)
+			unresolved = append(unresolved, no)
+			continue
+		}
+		if len(parsed) == 0 {
+			log.Printf("警告: 课序号 %s 的 teach-task 查询未返回可解析课程", no)
+			unresolved = append(unresolved, no)
+			continue
+		}
+
+		extraLessons = append(extraLessons, convertQueryLessons(parsed)...)
+	}
+
+	extraJSON, err := json.Marshal(extraLessons)
+	if err != nil {
+		return nil, nil, fmt.Errorf("序列化补查课程信息失败: %w", err)
+	}
+	unresolvedJSON, err := json.Marshal(normalizeCourseNos(unresolved))
+	if err != nil {
+		return nil, nil, fmt.Errorf("序列化未解决课序号失败: %w", err)
+	}
+	return json.RawMessage(extraJSON), json.RawMessage(unresolvedJSON), nil
+}
+
+func queryTeachTaskHTML(lessonNo string) (string, error) {
+	cmd := exec.Command(CourseElectionBin, "query", "--teach-task", "--lesson-no", lessonNo)
+	cmd.Dir = strings.TrimSuffix(CourseElectionBin, "/course-election")
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", err
+	}
+	return string(output), nil
+}
+
+func convertQueryLessons(items []Lesson) []Lesson {
+	out := make([]Lesson, 0, len(items))
+	for _, item := range items {
+		arrangeInfo := make([]ArrangeInfo, 0, len(item.ArrangeInfo))
+		for _, arrange := range item.ArrangeInfo {
+			arrangeInfo = append(arrangeInfo, ArrangeInfo{
+				WeekDay:   arrange.WeekDay,
+				WeekState: arrange.WeekState,
+				StartUnit: arrange.StartUnit,
+				EndUnit:   arrange.EndUnit,
+				Rooms:     arrange.Rooms,
+			})
+		}
+		out = append(out, Lesson{
+			ID:                 item.ID,
+			No:                 item.No,
+			Name:               item.Name,
+			Code:               item.Code,
+			Credits:            item.Credits,
+			CourseID:           item.CourseID,
+			StartWeek:          item.StartWeek,
+			EndWeek:            item.EndWeek,
+			CourseTypeID:       item.CourseTypeID,
+			CourseTypeName:     item.CourseTypeName,
+			CourseTypeCode:     item.CourseTypeCode,
+			CourseCategoryName: item.CourseCategoryName,
+			TeachDepartName:    item.TeachDepartName,
+			ExamModeName:       item.ExamModeName,
+			Scheduled:          item.Scheduled,
+			HasTextBook:        item.HasTextBook,
+			Period:             item.Period,
+			WeekHour:           item.WeekHour,
+			Withdrawable:       item.Withdrawable,
+			Textbooks:          item.Textbooks,
+			Teachers:           item.Teachers,
+			CampusCode:         item.CampusCode,
+			LangType:           item.LangType,
+			CampusName:         item.CampusName,
+			AdminClass:         item.AdminClass,
+			Remark:             item.Remark,
+			ArrangeInfo:        arrangeInfo,
+		})
+	}
+	return out
+}
+
+func mergeCourseInfo(baseCourseInfo, extraCourseInfo json.RawMessage) (json.RawMessage, error) {
+	var baseLessons []Lesson
+	if err := json.Unmarshal(baseCourseInfo, &baseLessons); err != nil {
+		return nil, fmt.Errorf("解析已有课程信息失败: %w", err)
+	}
+
+	var extraLessons []Lesson
+	if err := json.Unmarshal(extraCourseInfo, &extraLessons); err != nil {
+		return nil, fmt.Errorf("解析补查课程信息失败: %w", err)
+	}
+
+	merged := make([]Lesson, 0, len(baseLessons)+len(extraLessons))
+	seen := make(map[string]struct{}, len(baseLessons)+len(extraLessons))
+	for _, lesson := range append(baseLessons, extraLessons...) {
+		if _, ok := seen[lesson.No]; ok {
+			continue
+		}
+		seen[lesson.No] = struct{}{}
+		merged = append(merged, lesson)
+	}
+
+	result, err := json.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("序列化合并后的课程信息失败: %w", err)
+	}
+	return json.RawMessage(result), nil
+}
+
+func extractCourseNosFromCourseInfo(courseInfo json.RawMessage) (json.RawMessage, error) {
+	var lessons []Lesson
+	if err := json.Unmarshal(courseInfo, &lessons); err != nil {
+		return nil, fmt.Errorf("解析课程信息失败: %w", err)
+	}
+
+	nos := make([]string, 0, len(lessons))
+	for _, lesson := range lessons {
+		if strings.TrimSpace(lesson.No) == "" {
+			continue
+		}
+		nos = append(nos, lesson.No)
+	}
+
+	result, err := json.Marshal(normalizeCourseNos(nos))
+	if err != nil {
+		return nil, fmt.Errorf("序列化课序号失败: %w", err)
+	}
+	return json.RawMessage(result), nil
 }

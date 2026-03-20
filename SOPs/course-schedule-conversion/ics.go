@@ -39,6 +39,9 @@ func generateICSFromCourseInfo(courseInfo json.RawMessage, firstDayOfSemester, t
 	dtStamp := time.Now().UTC().Format("20060102T150405Z")
 	eventCount := 0
 	for _, lesson := range lessons {
+		if len(lesson.ArrangeInfo) == 0 {
+			continue
+		}
 		for _, arrange := range lesson.ArrangeInfo {
 			startClock, endClock, ok := resolveUnitRange(arrange.StartUnit, arrange.EndUnit)
 			if !ok {
