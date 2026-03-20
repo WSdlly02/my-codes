@@ -54,6 +54,8 @@ func runQuery(args []string) error {
 	lessonIDFilter := fs.String("lesson-id", "", "课程ID")
 	codeFilter := fs.String("code", "", "课程号")
 	selectedLessons := fs.Bool("selected-lessons", false, "只显示当前已选课程")
+	teachTask := fs.Bool("teach-task", false, "查询 teachTaskSearch!arrangeInfoList.action 并直接打印 HTML")
+	lessonNo := fs.String("lesson-no", "", "课序号，用于 --teach-task")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -64,6 +66,21 @@ func runQuery(args []string) error {
 		sessionValid = true
 	} else {
 		client = nil
+	}
+
+	if *teachTask {
+		if *lessonNo == "" {
+			return errors.New("--teach-task 必须配合 --lesson-no 使用")
+		}
+		if client == nil || !sessionValid {
+			return errors.New("当前 Cookie 无效，无法查询 teach-task，请先执行 warmup")
+		}
+		html, err := jwxt.QueryTeachTaskHTML(client, *lessonNo)
+		if err != nil {
+			return err
+		}
+		fmt.Print(html)
+		return nil
 	}
 
 	if *profileID == "" {
