@@ -7,10 +7,14 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
-var reBodyMessage = regexp.MustCompile(`(?s)margin:auto;">\s*(.*?)\s*</br>`)
+var (
+	reBodyMessage = regexp.MustCompile(`(?s)margin:auto;">\s*(.*?)\s*</br>`)
+	reElectedID   = regexp.MustCompile(`electedIds\["l(\d+)"\]\s*=\s*true`)
+)
 
 func SelectLesson(client *http.Client, profileID, lessonID string) (string, error) {
 	elecSessionTime, err := fetchElecSessionTime(client, profileID)
@@ -81,6 +85,20 @@ func fetchElecSessionTime(client *http.Client, profileID string) (string, error)
 	return serverTime.In(localTZ()).Format("20060102150405"), nil
 }
 
+func FetchElectedLessonIDs(client *http.Client, profileID string) (map[string]bool, error) {
+	resp, err := fetchDefaultPage(client, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return parseElectedIDs(string(body)), nil
+}
+
 func fetchDefaultPage(client *http.Client, profileID string) (*http.Response, error) {
 	endpoint := fmt.Sprintf("%s/stdElectCourse!defaultPage.action?electionProfile.id=%s", baseURL, url.QueryEscape(profileID))
 	resp, err := client.Get(endpoint)
@@ -94,6 +112,21 @@ func fetchDefaultPage(client *http.Client, profileID string) (*http.Response, er
 	return resp, nil
 }
 
+func parseElectedIDs(html string) map[string]bool {
+	matches := reElectedID.FindAllStringSubmatch(html, -1)
+	elected := make(map[string]bool, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		if _, err := strconv.Atoi(match[1]); err != nil {
+			continue
+		}
+		elected[match[1]] = true
+	}
+	return elected
+}
+
 func ResolveLessonIDByName(mapping *LessonMappingCache, courseName string) (string, error) {
 	key := normalizeIndexKey(courseName)
 	ids := mapping.ByName[key]
@@ -103,7 +136,7 @@ func ResolveLessonIDByName(mapping *LessonMappingCache, courseName string) (stri
 	case 1:
 		return ids[0], nil
 	default:
-		return "", fmt.Errorf("课程名 %s 对应多个 lessonID，请改用 --lesson，候选: %s", courseName, strings.Join(ids, ","))
+		return "", fmt.Errorf("课程名 %s 对应多个 lessonID，请改用 --lesson-id，候选: %s", courseName, strings.Join(ids, ","))
 	}
 }
 

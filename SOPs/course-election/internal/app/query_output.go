@@ -8,9 +8,11 @@ import (
 )
 
 type lessonQueryFilter struct {
-	Name     string
-	LessonID string
-	Code     string
+	Name              string
+	LessonID          string
+	Code              string
+	SelectedOnly      bool
+	SelectedLessonIDs map[string]bool
 }
 
 type lessonDisplayEntry struct {
@@ -45,6 +47,9 @@ func matchLessonFilter(lesson jwxt.Lesson, filter lessonQueryFilter) bool {
 		return false
 	}
 	if filter.Code != "" && !strings.EqualFold(lesson.Code, filter.Code) {
+		return false
+	}
+	if filter.SelectedOnly && !filter.SelectedLessonIDs[fmt.Sprintf("%d", lesson.ID)] {
 		return false
 	}
 	return true

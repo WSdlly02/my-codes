@@ -53,6 +53,7 @@ func runQuery(args []string) error {
 	nameFilter := fs.String("name", "", "课程名称关键词")
 	lessonIDFilter := fs.String("lesson-id", "", "课程ID")
 	codeFilter := fs.String("code", "", "课程号")
+	selectedLessons := fs.Bool("selected-lessons", false, "只显示当前已选课程")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -66,6 +67,9 @@ func runQuery(args []string) error {
 	}
 
 	if *profileID == "" {
+		if *selectedLessons {
+			return errors.New("--selected-lessons 必须配合 --profile 使用")
+		}
 		var channels []jwxt.ChannelEntry
 		if sessionValid {
 			channels, err = jwxt.LoadOrFetchChannels(client)
@@ -98,10 +102,23 @@ func runQuery(args []string) error {
 		return err
 	}
 
+	selectedLessonIDs := map[string]bool(nil)
+	if *selectedLessons {
+		if client == nil {
+			return errors.New("当前 Cookie 无效，无法查询已选课程，请先执行 warmup")
+		}
+		selectedLessonIDs, err = jwxt.FetchElectedLessonIDs(client, *profileID)
+		if err != nil {
+			return fmt.Errorf("获取已选课程失败: %w", err)
+		}
+	}
+
 	filter := lessonQueryFilter{
-		Name:     *nameFilter,
-		LessonID: *lessonIDFilter,
-		Code:     *codeFilter,
+		Name:              *nameFilter,
+		LessonID:          *lessonIDFilter,
+		Code:              *codeFilter,
+		SelectedOnly:      *selectedLessons,
+		SelectedLessonIDs: selectedLessonIDs,
 	}
 	entries := buildLessonDisplayEntries(mapping, counts, filter)
 	for i, entry := range entries {
