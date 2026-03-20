@@ -13,6 +13,8 @@
 *.log
 __pycache__/
 .vscode/
+cache/
+chrome-profile/
 result/
 target/
 .direnv/
