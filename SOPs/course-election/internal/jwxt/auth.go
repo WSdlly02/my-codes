@@ -3,7 +3,6 @@ package jwxt
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
@@ -179,11 +179,11 @@ func fetchCaptchaImage(ctx context.Context) ([]byte, error) {
 }
 
 func setInputValue(ctx context.Context, preferredSelector, value string) error {
-	preferredSelectorJSON, err := json.Marshal(preferredSelector)
+	preferredSelectorJSON, err := sonic.Marshal(preferredSelector)
 	if err != nil {
 		return err
 	}
-	valueJSON, err := json.Marshal(value)
+	valueJSON, err := sonic.Marshal(value)
 	if err != nil {
 		return err
 	}

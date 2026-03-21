@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 const (
@@ -159,7 +161,7 @@ func callLocalOCR(base64Image, prompt, system string) (string, error) {
 		},
 	}
 
-	body, err := json.Marshal(payload)
+	body, err := sonic.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("编码 OCR 请求失败: %w", err)
 	}
@@ -182,7 +184,7 @@ func callLocalOCR(base64Image, prompt, system string) (string, error) {
 		Response string `json:"response"`
 		Error    string `json:"error"`
 	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	if err := sonic.Unmarshal(respBody, &result); err != nil {
 		return "", fmt.Errorf("解析 OCR 响应 JSON 失败: %w", err)
 	}
 	if result.Error != "" {
@@ -199,8 +201,8 @@ func normalizeCourseNoJSON(raw string) (json.RawMessage, error) {
 	trimmed = strings.TrimSpace(trimmed)
 
 	var items []string
-	if err := json.Unmarshal([]byte(trimmed), &items); err == nil {
-		normalized, err := json.Marshal(normalizeCourseNos(items))
+	if err := sonic.Unmarshal([]byte(trimmed), &items); err == nil {
+		normalized, err := sonic.Marshal(normalizeCourseNos(items))
 		if err != nil {
 			return nil, fmt.Errorf("序列化规范化课序号失败: %w", err)
 		}
@@ -212,7 +214,7 @@ func normalizeCourseNoJSON(raw string) (json.RawMessage, error) {
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("响应不是有效 JSON 数组，且未匹配到课序号模式")
 	}
-	normalized, err := json.Marshal(normalizeCourseNos(matches))
+	normalized, err := sonic.Marshal(normalizeCourseNos(matches))
 	if err != nil {
 		return nil, fmt.Errorf("序列化规范化课序号失败: %w", err)
 	}
@@ -238,7 +240,7 @@ func normalizeCourseNos(items []string) []string {
 
 func queryCourseInfoFromCache(courseNos json.RawMessage, mappingPaths []string) (json.RawMessage, json.RawMessage, error) {
 	var nos []string
-	if err := json.Unmarshal(courseNos, &nos); err != nil {
+	if err := sonic.Unmarshal(courseNos, &nos); err != nil {
 		return nil, nil, fmt.Errorf("解析课序号 JSON 失败: %w", err)
 	}
 	nos = normalizeCourseNos(nos)
@@ -283,11 +285,11 @@ func queryCourseInfoFromCache(courseNos json.RawMessage, mappingPaths []string) 
 		log.Printf("警告: 缓存中未找到这些课序号，已跳过: %s", strings.Join(missing, ", "))
 	}
 
-	matchedJSON, err := json.Marshal(matched)
+	matchedJSON, err := sonic.Marshal(matched)
 	if err != nil {
 		return nil, nil, fmt.Errorf("序列化课程信息失败: %w", err)
 	}
-	missingJSON, err := json.Marshal(missing)
+	missingJSON, err := sonic.Marshal(missing)
 	if err != nil {
 		return nil, nil, fmt.Errorf("序列化缺失课序号失败: %w", err)
 	}
@@ -305,7 +307,7 @@ func loadLessonMappingCache(path string) (*LessonMappingCache, error) {
 	}
 
 	var mapping LessonMappingCache
-	if err := json.Unmarshal(data, &mapping); err != nil {
+	if err := sonic.Unmarshal(data, &mapping); err != nil {
 		return nil, fmt.Errorf("解析课程缓存失败: %w", err)
 	}
 	if len(mapping.Lessons) == 0 {
@@ -316,7 +318,7 @@ func loadLessonMappingCache(path string) (*LessonMappingCache, error) {
 
 func queryMissingCourseInfoFromTeachTask(courseNos json.RawMessage) (json.RawMessage, json.RawMessage, error) {
 	var nos []string
-	if err := json.Unmarshal(courseNos, &nos); err != nil {
+	if err := sonic.Unmarshal(courseNos, &nos); err != nil {
 		return nil, nil, fmt.Errorf("解析待补查课序号失败: %w", err)
 	}
 	nos = normalizeCourseNos(nos)
@@ -350,11 +352,11 @@ func queryMissingCourseInfoFromTeachTask(courseNos json.RawMessage) (json.RawMes
 		extraLessons = append(extraLessons, convertQueryLessons(parsed)...)
 	}
 
-	extraJSON, err := json.Marshal(extraLessons)
+	extraJSON, err := sonic.Marshal(extraLessons)
 	if err != nil {
 		return nil, nil, fmt.Errorf("序列化补查课程信息失败: %w", err)
 	}
-	unresolvedJSON, err := json.Marshal(normalizeCourseNos(unresolved))
+	unresolvedJSON, err := sonic.Marshal(normalizeCourseNos(unresolved))
 	if err != nil {
 		return nil, nil, fmt.Errorf("序列化未解决课序号失败: %w", err)
 	}
@@ -422,12 +424,12 @@ func convertQueryLessons(items []Lesson) []Lesson {
 
 func mergeCourseInfo(baseCourseInfo, extraCourseInfo json.RawMessage) (json.RawMessage, error) {
 	var baseLessons []Lesson
-	if err := json.Unmarshal(baseCourseInfo, &baseLessons); err != nil {
+	if err := sonic.Unmarshal(baseCourseInfo, &baseLessons); err != nil {
 		return nil, fmt.Errorf("解析已有课程信息失败: %w", err)
 	}
 
 	var extraLessons []Lesson
-	if err := json.Unmarshal(extraCourseInfo, &extraLessons); err != nil {
+	if err := sonic.Unmarshal(extraCourseInfo, &extraLessons); err != nil {
 		return nil, fmt.Errorf("解析补查课程信息失败: %w", err)
 	}
 
@@ -441,7 +443,7 @@ func mergeCourseInfo(baseCourseInfo, extraCourseInfo json.RawMessage) (json.RawM
 		merged = append(merged, lesson)
 	}
 
-	result, err := json.Marshal(merged)
+	result, err := sonic.Marshal(merged)
 	if err != nil {
 		return nil, fmt.Errorf("序列化合并后的课程信息失败: %w", err)
 	}
@@ -450,7 +452,7 @@ func mergeCourseInfo(baseCourseInfo, extraCourseInfo json.RawMessage) (json.RawM
 
 func extractCourseNosFromCourseInfo(courseInfo json.RawMessage) (json.RawMessage, error) {
 	var lessons []Lesson
-	if err := json.Unmarshal(courseInfo, &lessons); err != nil {
+	if err := sonic.Unmarshal(courseInfo, &lessons); err != nil {
 		return nil, fmt.Errorf("解析课程信息失败: %w", err)
 	}
 
@@ -462,7 +464,7 @@ func extractCourseNosFromCourseInfo(courseInfo json.RawMessage) (json.RawMessage
 		nos = append(nos, lesson.No)
 	}
 
-	result, err := json.Marshal(normalizeCourseNos(nos))
+	result, err := sonic.Marshal(normalizeCourseNos(nos))
 	if err != nil {
 		return nil, fmt.Errorf("序列化课序号失败: %w", err)
 	}

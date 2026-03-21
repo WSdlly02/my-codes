@@ -3,12 +3,13 @@ package jwxt
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/bytedance/sonic"
 )
 
 func solveMathCaptcha(img []byte) ocrResult {
@@ -35,7 +36,7 @@ func solveMathCaptcha(img []byte) ocrResult {
 		},
 	}
 
-	body, err := json.Marshal(payload)
+	body, err := sonic.Marshal(payload)
 	if err != nil {
 		return ocrResult{err: fmt.Errorf("编码 OCR 请求失败: %w", err)}
 	}
@@ -60,7 +61,7 @@ func solveMathCaptcha(img []byte) ocrResult {
 		Response string `json:"response"`
 		Error    string `json:"error"`
 	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	if err := sonic.Unmarshal(respBody, &result); err != nil {
 		return ocrResult{err: fmt.Errorf("解析 OCR 响应 JSON 失败: %w", err)}
 	}
 	if result.Error != "" {

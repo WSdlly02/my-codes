@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 func generateICSFromCourseInfo(courseInfo json.RawMessage, firstDayOfSemester, timezone string) (string, error) {
 	var lessons []Lesson
-	if err := json.Unmarshal(courseInfo, &lessons); err != nil {
+	if err := sonic.Unmarshal(courseInfo, &lessons); err != nil {
 		return "", fmt.Errorf("解析课程信息 JSON 失败: %w", err)
 	}
 	if len(lessons) == 0 {
