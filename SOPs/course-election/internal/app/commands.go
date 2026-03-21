@@ -150,11 +150,18 @@ func runQuery(args []string) error {
 
 func runWarmup(args []string) error {
 	fs := newFlagSet("warmup")
+	username := fs.String("username", "", "登录用户名")
+	password := fs.String("password", "", "登录密码")
+	autofillCaptcha := fs.Bool("autofill-captcha", false, "自动识别并填写验证码")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	client, _, relogin, err := jwxt.EnsureLogin()
+	client, _, relogin, err := jwxt.EnsureLoginWithOptions(jwxt.LoginAutofillOptions{
+		Name:            *username,
+		Password:        *password,
+		AutofillCaptcha: *autofillCaptcha,
+	})
 	if err != nil {
 		return err
 	}
@@ -170,6 +177,27 @@ func runWarmup(args []string) error {
 		fmt.Println("复用现有 Cookie")
 	}
 	fmt.Printf("已缓存 %d 个选课通道到 %s\n", len(channels), jwxt.ChannelsCachePath())
+	return nil
+}
+
+func runFlushState(args []string) error {
+	fs := newFlagSet("flush-state")
+	all := fs.Bool("all", false, "同时删除 mapping/counts 缓存")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if err := jwxt.FlushLoginState(); err != nil {
+		return fmt.Errorf("删除 cookies 失败: %w", err)
+	}
+	fmt.Println("已清除登录状态")
+
+	if *all {
+		if err := jwxt.FlushDerivedCaches(); err != nil {
+			return fmt.Errorf("删除 mapping/counts 缓存失败: %w", err)
+		}
+		fmt.Println("已清除 mapping/counts 缓存")
+	}
 	return nil
 }
 

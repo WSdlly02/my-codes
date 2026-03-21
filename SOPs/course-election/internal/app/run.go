@@ -19,6 +19,10 @@ func Run(args []string) int {
 		if err := runWarmup(args[1:]); err != nil {
 			fatal(err)
 		}
+	case "flush-state":
+		if err := runFlushState(args[1:]); err != nil {
+			fatal(err)
+		}
 	case "select":
 		if err := runSelect(args[1:]); err != nil {
 			fatal(err)

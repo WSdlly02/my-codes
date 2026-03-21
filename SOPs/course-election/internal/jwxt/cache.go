@@ -1,6 +1,7 @@
 package jwxt
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -37,6 +38,33 @@ func MappingCachePath(profileID string) string {
 
 func CountsCachePath(profileID string) string {
 	return filepath.Join(cacheDir, "counts_"+profileID+".json")
+}
+
+func FlushLoginState() error {
+	if err := os.Remove(cookieFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func FlushDerivedCaches() error {
+	patterns := []string{
+		filepath.Join(cacheDir, "mapping_*.json"),
+		filepath.Join(cacheDir, "counts_*.json"),
+	}
+
+	for _, pattern := range patterns {
+		paths, err := filepath.Glob(pattern)
+		if err != nil {
+			return err
+		}
+		for _, path := range paths {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func saveCookies(cookies []*http.Cookie) error {
