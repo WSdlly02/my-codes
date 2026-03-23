@@ -90,7 +90,7 @@ func fetchLessonCounts(client *http.Client, profileID string) (map[string]Lesson
 }
 
 func fetchPayload(client *http.Client, endpoint string) ([]byte, error) {
-	resp, err := client.Get(endpoint)
+	resp, err := getWithRetry(client, endpoint)
 	if err != nil {
 		return nil, err
 	}

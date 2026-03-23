@@ -101,7 +101,7 @@ func FetchElectedLessonIDs(client *http.Client, profileID string) (map[string]bo
 
 func fetchDefaultPage(client *http.Client, profileID string) (*http.Response, error) {
 	endpoint := fmt.Sprintf("%s/stdElectCourse!defaultPage.action?electionProfile.id=%s", baseURL, url.QueryEscape(profileID))
-	resp, err := client.Get(endpoint)
+	resp, err := getWithRetry(client, endpoint)
 	if err != nil {
 		return nil, err
 	}

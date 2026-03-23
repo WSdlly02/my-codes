@@ -332,8 +332,9 @@ func buildClient(cookies []*http.Cookie) *http.Client {
 	jar, _ := newPersistentJar(u, cookies)
 
 	return &http.Client{
-		Jar:     jar,
-		Timeout: time.Duration(defaultTimeout) * time.Second,
+		Transport: newHTTPTransport(),
+		Jar:       jar,
+		Timeout:   time.Duration(defaultTimeout) * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -437,7 +438,7 @@ func EnsureLoginWithOptions(opts LoginAutofillOptions) (*http.Client, []*http.Co
 }
 
 func IsSessionValid(client *http.Client) bool {
-	resp, err := client.Get(baseURL + "/stdElectCourse.action")
+	resp, err := getWithRetry(client, baseURL+"/stdElectCourse.action")
 	if err != nil {
 		return false
 	}

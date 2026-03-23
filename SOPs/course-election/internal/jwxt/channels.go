@@ -20,7 +20,7 @@ var (
 
 func FetchAndCacheChannels(client *http.Client) ([]ChannelEntry, error) {
 	endpoint := baseURL + "/stdElectCourse.action"
-	resp, err := client.Get(endpoint)
+	resp, err := getWithRetry(client, endpoint)
 	if err != nil {
 		return nil, err
 	}
