@@ -50,6 +50,23 @@ Do not conflate fullscreen with presentation flow.
 
 ## Framework APIs
 
+### `usePresentationRuntime`
+
+Use this hook as the primary slideshow runtime boundary:
+
+```ts
+const runtime = usePresentationRuntime(slides);
+```
+
+It centralizes:
+
+- current slide index
+- preview-page detection
+- fullscreen state
+- preview-page `startShow()`
+- generic `toggleFullscreenMode()`
+- application-level `quitApp()`
+
 ### `useDeckState`
 
 Use this hook to own deck state inside the browser:
@@ -112,6 +129,18 @@ const result = await backend.call('ping');
 const unsubscribe = backend.on('data_updated', (payload) => {
   console.log(payload);
 });
+```
+
+### Optional Thin Hooks
+
+The framework also includes optional thin helpers:
+
+```ts
+const { data, loading, error } = useBackendQuery('get_system_info');
+useBackendEvent('system_info_updated', (payload) => {
+  console.log(payload);
+});
+const { quit, isQuitting } = useAppQuit();
 ```
 
 ## Backend Contract

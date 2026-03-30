@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
-import { backend, useDeckState, useFullscreen, useKeyboardBindings } from './framework';
+import {
+  useBackendEvent,
+  useBackendQuery,
+  useKeyboardBindings,
+  usePresentationRuntime,
+} from './framework';
 
 type Theme = 'dark' | 'light';
 
@@ -101,17 +106,25 @@ function LogoMark() {
 
 function App() {
   const [theme, setTheme] = useState<Theme>('dark');
-  const { currentIndex, total, goTo } = useDeckState(slides);
+  const runtime = usePresentationRuntime(slides);
+  const { currentIndex, total, goTo } = runtime;
   const [exiting, setExiting] = useState<number | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
-  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
-  const [isQuitting, setIsQuitting] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const dots = useMemo(() => Array.from({ length: total }, (_, index) => index), [total]);
-  const { isFullscreen, enter: enterFullscreen, exit: exitFullscreen } = useFullscreen();
-  const isPreviewPage = currentIndex === 0;
+  const {
+    isFullscreen,
+    isPreviewPage,
+    isQuitting,
+    presentButtonLabel,
+    startShow,
+    toggleFullscreenMode,
+    quitApp,
+  } = runtime;
+  const { data: initialSystemInfo } = useBackendQuery<SystemInfo>('get_system_info');
   const canGoPreviousInShow = currentIndex > 0;
   const canGoNextInShow = currentIndex < total - 1;
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(initialSystemInfo);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -171,73 +184,33 @@ function App() {
     }, 350);
   };
 
+  const animateNext = () => {
+    animateTo(currentIndex + 1);
+  };
+
+  const animatePrevious = () => {
+    animateTo(currentIndex - 1);
+  };
+
   useKeyboardBindings([
-    { keys: ['ArrowRight'], onKey: () => animateTo(currentIndex + 1) },
-    { keys: ['ArrowLeft'], onKey: () => animateTo(currentIndex - 1) },
+    { keys: ['ArrowRight'], onKey: () => animateNext() },
+    { keys: ['ArrowLeft'], onKey: () => animatePrevious() },
     { keys: ['f', 'F'], onKey: () => void toggleFullscreenMode() },
   ]);
 
   useEffect(() => {
-    void backend.getJSON<{ ok: boolean; filesystem?: unknown; realtime?: unknown; os?: unknown }>(
-      '/api/capabilities',
-    ).catch(() => undefined);
-  }, []);
+    if (initialSystemInfo) {
+      setSystemInfo(initialSystemInfo);
+    }
+  }, [initialSystemInfo]);
 
-  useEffect(() => {
-    let mounted = true;
-
-    void backend.call<SystemInfo>('get_system_info')
-      .then((data) => {
-        if (mounted) {
-          setSystemInfo(data);
-        }
-      })
-      .catch(() => undefined);
-
-    const unsubscribe = backend.on<SystemInfo>('system_info_updated', (data) => {
-      setSystemInfo(data);
-    });
-
-    return () => {
-      mounted = false;
-      unsubscribe();
-    };
-  }, []);
+  useBackendEvent<SystemInfo>('system_info_updated', (data) => {
+    setSystemInfo(data);
+  });
 
   const toggleTheme = () => {
     setTheme((value) => (value === 'dark' ? 'light' : 'dark'));
   };
-
-  const startShow = async () => {
-    await enterFullscreen();
-    goTo(1);
-  };
-
-  const toggleFullscreenMode = async () => {
-    if (isFullscreen) {
-      await exitFullscreen();
-      return;
-    }
-
-    await enterFullscreen();
-  };
-
-  const quitApp = async () => {
-    if (isQuitting) {
-      return;
-    }
-
-    setIsQuitting(true);
-
-    try {
-      await backend.call<{ ok: boolean }>('quit_app');
-      window.close();
-    } catch {
-      setIsQuitting(false);
-    }
-  };
-
-  const presentButtonLabel = isFullscreen ? '结束放映' : '进入放映';
 
   const renderSlide = (slide: Slide, index: number) => {
     const className = [

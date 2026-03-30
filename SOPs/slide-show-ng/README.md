@@ -32,6 +32,10 @@ cd frontend && npm run build
 go build
 ```
 
+## Migration
+
+- Standard React migration guide: `docs/migrating-standard-react.md`
+
 ## Slideshow Flow
 
 - App launch opens a normal app window, not fullscreen.
@@ -78,6 +82,8 @@ The reusable frontend layer lives in `frontend/src/framework/`:
 - `useDeckState`: local deck state and navigation helpers
 - `useKeyboardBindings`: reusable key binding hook
 - `useFullscreen`: fullscreen state and toggles
+- `usePresentationRuntime`: unified slideshow runtime for preview, fullscreen, and app quit semantics
+- `useBackendEvent` / `useBackendQuery` / `useAppQuit`: optional thin backend helper hooks
 - `backend`: generic REST/WebSocket bridge with no slide-specific assumptions
 
 ## Backend Surface
@@ -99,4 +105,5 @@ This is the intended pattern for backend features in this framework: Go gathers 
 ## Docs
 
 - Frontend/AI tooling integration: `docs/ai-tooling.md`
+- Standard React migration guide: `docs/migrating-standard-react.md`
 - Backend capability integration: `docs/backend-integration.md`
