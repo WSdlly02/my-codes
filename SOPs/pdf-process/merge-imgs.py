@@ -5,6 +5,7 @@ import argparse
 import time
 from datetime import datetime
 from pathlib import Path
+from shutil import rmtree
 
 import requests
 from PIL import Image
@@ -38,6 +39,23 @@ def normalize_base_url(base_url: str) -> str:
     return base_url if base_url.endswith("/") else f"{base_url}/"
 
 
+def ensure_resume_consistency(folder: Path, base_url: str) -> None:
+    base_url_file = folder / "base_url.txt"
+    normalized_base_url = normalize_base_url(base_url)
+
+    if base_url_file.exists():
+        saved_url = base_url_file.read_text(encoding="utf-8").strip()
+        if saved_url != normalized_base_url:
+            print("检测到 base_url 不一致，清除旧数据并重新开始...")
+            rmtree(folder, ignore_errors=True)
+    elif folder.exists():
+        print("检测到下载目录存在但缺少标识文件，清除并重新开始...")
+        rmtree(folder, ignore_errors=True)
+
+    folder.mkdir(parents=True, exist_ok=True)
+    base_url_file.write_text(normalized_base_url, encoding="utf-8")
+
+
 def download_images(
     session: requests.Session,
     base_url: str,
@@ -47,7 +65,7 @@ def download_images(
     min_bytes: int,
     max_failures: int,
 ):
-    folder.mkdir(parents=True, exist_ok=True)
+    ensure_resume_consistency(folder, base_url)
     page = start_page
     downloaded_files = []
     consecutive_failures = 0

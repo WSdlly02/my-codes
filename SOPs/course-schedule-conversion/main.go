@@ -105,6 +105,7 @@ func ocrRecognizeCourseNos(img *os.File) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("识别结果: %s\n", raw)
 
 	courseNosJSON, err := normalizeCourseNoJSON(raw)
 	if err != nil {

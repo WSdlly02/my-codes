@@ -65,7 +65,7 @@ def main() -> int:
     wav_dir.mkdir(parents=True, exist_ok=True)
 
     qwen_asr_script = script_dir / "qwen-asr.py"
-    dockerfile_path = script_dir / "Dockerfile.qwen-asr:cpu"
+    dockerfile_path = script_dir / f"Dockerfile.{IMAGE_NAME}"
     if not qwen_asr_script.is_file():
         print(f"❌ 错误: 未找到 {qwen_asr_script}")
         return 1
@@ -74,7 +74,9 @@ def main() -> int:
         return 1
 
     files = sorted(
-        path for path in input_dir.iterdir() if path.suffix.lower() in SUPPORTED_EXTENSIONS
+        path
+        for path in input_dir.iterdir()
+        if path.suffix.lower() in SUPPORTED_EXTENSIONS
     )
     if not files:
         print(f"📂 {input_dir} 中没有找到支持的音频文件。")
@@ -162,7 +164,9 @@ def convert_to_wav(audio_path: Path, wav_path: Path, ffmpeg_bin: str) -> None:
         "16000",
         str(wav_path),
     ]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
 
 def run_qwen_asr_container(

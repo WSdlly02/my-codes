@@ -31,7 +31,7 @@ def main() -> int:
         dtype=torch.bfloat16,
         device_map="cpu",
         max_inference_batch_size=1,
-        max_new_tokens=1024,
+        max_new_tokens=8192,
     )
 
     with torch.inference_mode():
