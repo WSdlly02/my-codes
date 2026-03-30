@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -26,15 +27,32 @@ func main() {
 	port := findPort()
 	addr := "127.0.0.1:" + port
 	token := randomToken()
-	server := newDeckServer(token)
+	var httpServer *http.Server
+	var browserCmd *exec.Cmd
+	var managed bool
+	var cleanup func()
+	var err error
+	var shutdownOnce sync.Once
+	shutdownApp := func() {
+		shutdownOnce.Do(func() {
+			if managed && browserCmd != nil && browserCmd.Process != nil {
+				_ = browserCmd.Process.Kill()
+			}
+			if httpServer != nil {
+				shutdownServer(httpServer)
+			}
+			os.Exit(0)
+		})
+	}
+	server := newDeckServer(token, shutdownApp)
 
 	sub, _ := fs.Sub(frontend, "frontend/dist")
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("/api/ping", server.handlePing)
-	mux.HandleFunc("/api/slides", server.handleSlides)
+	mux.HandleFunc("/api/capabilities", server.handleCapabilities)
 	mux.HandleFunc("/ws", server.handleWS)
-	httpServer := &http.Server{
+	httpServer = &http.Server{
 		Addr:    addr,
 		Handler: mux,
 	}
@@ -51,7 +69,7 @@ func main() {
 
 	waitReady(addr)
 	url := fmt.Sprintf("http://%s?token=%s", addr, token)
-	browserCmd, managed, cleanup, err := openBrowser(url)
+	browserCmd, managed, cleanup, err = openBrowser(url)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -60,7 +78,7 @@ func main() {
 	if managed {
 		go func() {
 			_ = browserCmd.Wait()
-			shutdownServer(httpServer)
+			shutdownApp()
 		}()
 	}
 
@@ -83,8 +101,6 @@ func openBrowser(url string) (*exec.Cmd, bool, func(), error) {
 		"--app=" + url,
 		"--new-window",
 		"--window-size=1920,1080",
-		"--start-fullscreen",
-		"--kiosk",
 		"--disable-infobars",
 		"--no-default-browser-check",
 		"--no-first-run",

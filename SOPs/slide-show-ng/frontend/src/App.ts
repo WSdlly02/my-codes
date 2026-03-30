@@ -1,22 +1,23 @@
-import { call, on } from './lib/bridge';
+import { backend } from './framework';
 
-export type Slide = {
-  label?: string;
-  kind: string;
+export type BackendCapabilities = {
+  filesystem: {
+    read: boolean;
+    write: boolean;
+    watch: boolean;
+  };
+  realtime: {
+    events: boolean;
+  };
+  os: {
+    supported: boolean;
+  };
 };
 
-type SlideChangedEvent = {
-  index: number;
-};
+export async function bootstrapBackendCapabilities(): Promise<BackendCapabilities> {
+  return backend.getJSON<BackendCapabilities>('/api/capabilities');
+}
 
-export async function bootstrapDeckBridge(
-  setCurrentSlide: (index: number) => void,
-): Promise<Slide[]> {
-  const slides = await call<Slide[]>('get_slides');
-
-  on<SlideChangedEvent>('slide_changed', (data) => {
-    setCurrentSlide(data.index);
-  });
-
-  return slides;
+export function bindBackendEvent<T>(event: string, onEvent: (data: T) => void) {
+  return backend.on<T>(event, onEvent);
 }

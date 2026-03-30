@@ -1,11 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
+import { backend, useDeckState, useFullscreen, useKeyboardBindings } from './framework';
 
 type Theme = 'dark' | 'light';
 
+type SystemInfo = {
+  timestamp: string;
+  hostname: string;
+  os: string;
+  arch: string;
+  numCpu: number;
+  goroutines: number;
+  memoryAllocMb: number;
+  appUptimeSec: number;
+};
+
 type Slide = {
   label?: string;
-  kind: 'hero' | 'why' | 'architecture' | 'comparison' | 'getting-started' | 'ending';
+  kind:
+    | 'hero'
+    | 'why'
+    | 'architecture'
+    | 'comparison'
+    | 'system-info'
+    | 'getting-started'
+    | 'ending';
 };
 
 const slides: Slide[] = [
@@ -13,6 +32,7 @@ const slides: Slide[] = [
   { label: '为什么', kind: 'why' },
   { label: '架构', kind: 'architecture' },
   { label: '对比', kind: 'comparison' },
+  { label: '实时能力', kind: 'system-info' },
   { label: '开始', kind: 'getting-started' },
   { kind: 'ending' },
 ];
@@ -80,31 +100,24 @@ function LogoMark() {
 }
 
 function App() {
-  const total = slides.length;
   const [theme, setTheme] = useState<Theme>('dark');
-  const [current, setCurrent] = useState(0);
+  const { currentIndex, total, goTo } = useDeckState(slides);
   const [exiting, setExiting] = useState<number | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const [isQuitting, setIsQuitting] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const dots = useMemo(() => Array.from({ length: total }, (_, index) => index), [total]);
+  const { isFullscreen, enter: enterFullscreen, exit: exitFullscreen } = useFullscreen();
+  const isPreviewPage = currentIndex === 0;
+  const canGoPreviousInShow = currentIndex > 0;
+  const canGoNextInShow = currentIndex < total - 1;
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === ' ') {
-        event.preventDefault();
-        goTo(current + 1);
-      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        goTo(current - 1);
-      } else if (event.key === 'f' || event.key === 'F') {
-        void toggleFullscreen();
-      }
-    };
-
     const onTouchStart = (event: TouchEvent) => {
       touchStartX.current = event.touches[0]?.clientX ?? null;
     };
@@ -124,31 +137,33 @@ function App() {
       touchStartX.current = null;
 
       if (Math.abs(deltaX) > 50) {
-        goTo(deltaX < 0 ? current + 1 : current - 1);
+        if (isPreviewPage) {
+          return;
+        }
+
+        animateTo(deltaX < 0 ? currentIndex + 1 : currentIndex - 1);
       }
     };
 
-    document.addEventListener('keydown', onKeyDown);
     document.addEventListener('touchstart', onTouchStart, { passive: true });
     document.addEventListener('touchend', onTouchEnd);
 
     return () => {
-      document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('touchstart', onTouchStart);
       document.removeEventListener('touchend', onTouchEnd);
     };
-  }, [current, isAnimating]);
+  }, [currentIndex, isAnimating, isPreviewPage]);
 
-  const goTo = (next: number) => {
-    if (isAnimating || next === current || next < 0 || next >= total) {
+  const animateTo = (nextIndex: number) => {
+    if (isAnimating || nextIndex === currentIndex || nextIndex < 0 || nextIndex >= total) {
       return;
     }
 
     setIsAnimating(true);
-    setExiting(current);
+    setExiting(currentIndex);
 
     window.setTimeout(() => {
-      setCurrent(next);
+      goTo(nextIndex);
       window.setTimeout(() => {
         setExiting(null);
         setIsAnimating(false);
@@ -156,23 +171,78 @@ function App() {
     }, 350);
   };
 
+  useKeyboardBindings([
+    { keys: ['ArrowRight'], onKey: () => animateTo(currentIndex + 1) },
+    { keys: ['ArrowLeft'], onKey: () => animateTo(currentIndex - 1) },
+    { keys: ['f', 'F'], onKey: () => void toggleFullscreenMode() },
+  ]);
+
+  useEffect(() => {
+    void backend.getJSON<{ ok: boolean; filesystem?: unknown; realtime?: unknown; os?: unknown }>(
+      '/api/capabilities',
+    ).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    void backend.call<SystemInfo>('get_system_info')
+      .then((data) => {
+        if (mounted) {
+          setSystemInfo(data);
+        }
+      })
+      .catch(() => undefined);
+
+    const unsubscribe = backend.on<SystemInfo>('system_info_updated', (data) => {
+      setSystemInfo(data);
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
   const toggleTheme = () => {
     setTheme((value) => (value === 'dark' ? 'light' : 'dark'));
   };
 
-  const toggleFullscreen = async () => {
-    if (!document.fullscreenElement) {
-      await document.documentElement.requestFullscreen?.();
+  const startShow = async () => {
+    await enterFullscreen();
+    goTo(1);
+  };
+
+  const toggleFullscreenMode = async () => {
+    if (isFullscreen) {
+      await exitFullscreen();
       return;
     }
 
-    await document.exitFullscreen?.();
+    await enterFullscreen();
   };
+
+  const quitApp = async () => {
+    if (isQuitting) {
+      return;
+    }
+
+    setIsQuitting(true);
+
+    try {
+      await backend.call<{ ok: boolean }>('quit_app');
+      window.close();
+    } catch {
+      setIsQuitting(false);
+    }
+  };
+
+  const presentButtonLabel = isFullscreen ? '结束放映' : '进入放映';
 
   const renderSlide = (slide: Slide, index: number) => {
     const className = [
       'slide',
-      current === index ? 'active' : '',
+      currentIndex === index ? 'active' : '',
       exiting === index ? 'exit' : '',
     ]
       .filter(Boolean)
@@ -199,6 +269,11 @@ function App() {
                 <br />
                 一个本地浏览器宿主，承载你的前端演示。
               </p>
+              <div className="hero-actions hero-actions-center">
+                <button className="primary-action" onClick={() => void startShow()} type="button">
+                  开始放映
+                </button>
+              </div>
             </div>
           </section>
         );
@@ -325,6 +400,56 @@ function App() {
             </div>
           </section>
         );
+      case 'system-info':
+        return (
+          <section className={className} key={slide.kind}>
+            <div className="bg-grid" />
+            <div className="slide-inner">
+              <div className="slide-label">{slide.label}</div>
+              <h2 className="slide-subtitle">
+                后端只负责
+                <br />
+                浏览器拿不到的实时能力
+              </h2>
+              <p className="slide-body">
+                这一页的数据由 Go 通过 WebSocket 持续推送，前端只负责展示，不把页码、动画和导航状态回写给后端。
+              </p>
+              <div className="system-grid">
+                <article className="metric-card">
+                  <div className="metric-label">主机</div>
+                  <div className="metric-value metric-value-compact">{systemInfo?.hostname ?? 'loading'}</div>
+                </article>
+                <article className="metric-card">
+                  <div className="metric-label">平台</div>
+                  <div className="metric-value metric-value-compact">
+                    {systemInfo ? `${systemInfo.os} / ${systemInfo.arch}` : 'loading'}
+                  </div>
+                </article>
+                <article className="metric-card">
+                  <div className="metric-label">CPU</div>
+                  <div className="metric-value">{systemInfo?.numCpu ?? '...'}</div>
+                </article>
+                <article className="metric-card">
+                  <div className="metric-label">Goroutines</div>
+                  <div className="metric-value">{systemInfo?.goroutines ?? '...'}</div>
+                </article>
+                <article className="metric-card">
+                  <div className="metric-label">Heap MB</div>
+                  <div className="metric-value">
+                    {systemInfo ? systemInfo.memoryAllocMb.toFixed(2) : '...'}
+                  </div>
+                </article>
+                <article className="metric-card">
+                  <div className="metric-label">Uptime</div>
+                  <div className="metric-value">{systemInfo ? `${systemInfo.appUptimeSec}s` : '...'}</div>
+                </article>
+              </div>
+              <div className="system-footnote">
+                最新采样时间：{systemInfo ? new Date(systemInfo.timestamp).toLocaleTimeString() : 'waiting for websocket'}
+              </div>
+            </div>
+          </section>
+        );
       case 'getting-started':
         return (
           <section className={className} key={slide.kind}>
@@ -380,8 +505,13 @@ function App() {
               <p className="slide-body slide-body-center">
                 这版项目已经摆脱 Linux WebView 的缩放和兼容性问题。
                 <br />
-                下一步只需要补充业务 API 和演示控制逻辑。
+                放映结束后可以直接退出应用。
               </p>
+              <div className="hero-actions">
+                <button className="danger-action" onClick={() => void quitApp()} type="button" disabled={isQuitting}>
+                  {isQuitting ? '正在退出...' : '退出程序'}
+                </button>
+              </div>
             </div>
           </section>
         );
@@ -403,7 +533,15 @@ function App() {
       </button>
 
       <div id="fs-hint">
-        <kbd>F</kbd> 全屏 <kbd>→</kbd> 下一页 <kbd>←</kbd> 上一页
+        {isPreviewPage ? (
+          <>
+            <kbd>F</kbd> 切换全屏 <kbd>→</kbd> 下一页 <kbd>←</kbd> 上一页
+          </>
+        ) : (
+          <>
+            <kbd>F</kbd> 切换全屏 <kbd>→</kbd> 下一页 <kbd>←</kbd> 上一页
+          </>
+        )}
       </div>
 
       <main id="app">{slides.map(renderSlide)}</main>
@@ -413,8 +551,8 @@ function App() {
           className="ctrl-btn"
           aria-label="上一页"
           title="← 上一页"
-          onClick={() => goTo(current - 1)}
-          disabled={current === 0}
+          onClick={() => animateTo(currentIndex - 1)}
+          disabled={!canGoPreviousInShow}
           type="button"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -425,34 +563,41 @@ function App() {
           {dots.map((index) => (
             <button
               key={index}
-              className={`dot${index === current ? ' active' : ''}`}
+              className={`dot${index === currentIndex ? ' active' : ''}`}
               aria-label={`跳到第 ${index + 1} 页`}
-              onClick={() => goTo(index)}
+              onClick={() => animateTo(index)}
               type="button"
             />
           ))}
         </div>
         <span id="slide-counter">
-          {current + 1} / {total}
+          {currentIndex + 1} / {total}
         </span>
         <button
           className="ctrl-btn"
           aria-label="下一页"
           title="→ 下一页"
-          onClick={() => goTo(current + 1)}
-          disabled={current === total - 1}
+          onClick={() => animateTo(currentIndex + 1)}
+          disabled={!canGoNextInShow}
           type="button"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="m9 18 6-6-6-6" />
           </svg>
         </button>
-        <button className="ctrl-btn" aria-label="全屏" title="F 全屏" onClick={() => void toggleFullscreen()} type="button">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
-          </svg>
-        </button>
       </div>
+
+      {!isPreviewPage ? (
+        <button
+          className="present-fab"
+          aria-label={presentButtonLabel}
+          title={presentButtonLabel}
+          onClick={() => void toggleFullscreenMode()}
+          type="button"
+        >
+          {presentButtonLabel}
+        </button>
+      ) : null}
     </div>
   );
 }

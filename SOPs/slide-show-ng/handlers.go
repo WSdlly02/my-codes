@@ -2,17 +2,14 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
+	"os"
+	"runtime"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
-
-type Slide struct {
-	Label string `json:"label,omitempty"`
-	Kind  string `json:"kind"`
-}
 
 type wsRequest struct {
 	ID      string          `json:"id"`
@@ -28,16 +25,28 @@ type wsResponse struct {
 	Data   any    `json:"data,omitempty"`
 }
 
-type slideChangedPayload struct {
-	Index int `json:"index"`
+type systemInfo struct {
+	Timestamp     string  `json:"timestamp"`
+	Hostname      string  `json:"hostname"`
+	OS            string  `json:"os"`
+	Arch          string  `json:"arch"`
+	NumCPU        int     `json:"numCpu"`
+	Goroutines    int     `json:"goroutines"`
+	MemoryAllocMB float64 `json:"memoryAllocMb"`
+	AppUptimeSec  int64   `json:"appUptimeSec"`
+}
+
+type wsClient struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
 }
 
 type deckServer struct {
-	token   string
-	slides  []Slide
-	clients map[*websocket.Conn]struct{}
-	current int
-	mu      sync.Mutex
+	token     string
+	clients   map[*wsClient]struct{}
+	startedAt time.Time
+	shutdown  func()
+	mu        sync.Mutex
 }
 
 var upgrader = websocket.Upgrader{
@@ -46,18 +55,34 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-func newDeckServer(token string) *deckServer {
-	return &deckServer{
-		token: token,
-		slides: []Slide{
-			{Kind: "hero"},
-			{Label: "为什么", Kind: "why"},
-			{Label: "架构", Kind: "architecture"},
-			{Label: "对比", Kind: "comparison"},
-			{Label: "开始", Kind: "getting-started"},
-			{Kind: "ending"},
-		},
-		clients: make(map[*websocket.Conn]struct{}),
+func newDeckServer(token string, shutdown func()) *deckServer {
+	server := &deckServer{
+		token:     token,
+		clients:   make(map[*wsClient]struct{}),
+		startedAt: time.Now(),
+		shutdown:  shutdown,
+	}
+
+	go server.streamSystemInfo()
+
+	return server
+}
+
+func (c *wsClient) writeJSON(message wsResponse) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.WriteJSON(message)
+}
+
+func (s *deckServer) streamSystemInfo() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.broadcast(wsResponse{
+			Event: "system_info_updated",
+			Data:  s.snapshotSystemInfo(),
+		})
 	}
 }
 
@@ -68,19 +93,35 @@ func (s *deckServer) handlePing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"current": s.current,
-		"slides":  len(s.slides),
+		"ok": true,
 	})
 }
 
-func (s *deckServer) handleSlides(w http.ResponseWriter, r *http.Request) {
+func (s *deckServer) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	if !s.authorized(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, s.slides)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"filesystem": map[string]any{
+			"read":  false,
+			"write": false,
+			"watch": false,
+		},
+		"realtime": map[string]any{
+			"events": true,
+		},
+		"os": map[string]any{
+			"supported": true,
+		},
+		"app": map[string]any{
+			"quit": s.shutdown != nil,
+		},
+		"demo": map[string]any{
+			"systemInfoStream": true,
+		},
+	})
 }
 
 func (s *deckServer) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -94,14 +135,15 @@ func (s *deckServer) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	client := &wsClient{conn: conn}
+
 	s.mu.Lock()
-	s.clients[conn] = struct{}{}
-	current := s.current
+	s.clients[client] = struct{}{}
 	s.mu.Unlock()
 
-	_ = conn.WriteJSON(wsResponse{
-		Event: "slide_changed",
-		Data:  slideChangedPayload{Index: current},
+	_ = client.writeJSON(wsResponse{
+		Event: "system_info_updated",
+		Data:  s.snapshotSystemInfo(),
 	})
 
 	for {
@@ -111,13 +153,13 @@ func (s *deckServer) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		resp := s.dispatch(req)
-		if err := conn.WriteJSON(resp); err != nil {
+		if err := client.writeJSON(resp); err != nil {
 			break
 		}
 	}
 
 	s.mu.Lock()
-	delete(s.clients, conn)
+	delete(s.clients, client)
 	s.mu.Unlock()
 	_ = conn.Close()
 }
@@ -131,31 +173,25 @@ func (s *deckServer) dispatch(req wsRequest) wsResponse {
 				"ok": true,
 			},
 		}
-	case "get_slides":
+	case "get_system_info":
 		return wsResponse{
 			ID:     req.ID,
-			Result: s.slides,
+			Result: s.snapshotSystemInfo(),
 		}
-	case "set_current_slide":
-		var payload slideChangedPayload
-		if err := json.Unmarshal(req.Payload, &payload); err != nil {
-			return wsResponse{ID: req.ID, Error: "invalid payload"}
-		}
-
-		if err := s.setCurrent(payload.Index); err != nil {
-			return wsResponse{ID: req.ID, Error: err.Error()}
+	case "quit_app":
+		if s.shutdown == nil {
+			return wsResponse{ID: req.ID, Error: "quit not supported"}
 		}
 
-		s.broadcast(wsResponse{
-			Event: "slide_changed",
-			Data:  slideChangedPayload{Index: payload.Index},
-		})
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			s.shutdown()
+		}()
 
 		return wsResponse{
 			ID: req.ID,
 			Result: map[string]any{
-				"ok":    true,
-				"index": payload.Index,
+				"ok": true,
 			},
 		}
 	default:
@@ -163,33 +199,42 @@ func (s *deckServer) dispatch(req wsRequest) wsResponse {
 	}
 }
 
-func (s *deckServer) setCurrent(index int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if index < 0 || index >= len(s.slides) {
-		return errors.New("slide index out of range")
-	}
-
-	s.current = index
-	return nil
-}
-
 func (s *deckServer) broadcast(message wsResponse) {
 	s.mu.Lock()
-	clients := make([]*websocket.Conn, 0, len(s.clients))
-	for conn := range s.clients {
-		clients = append(clients, conn)
+	clients := make([]*wsClient, 0, len(s.clients))
+	for client := range s.clients {
+		clients = append(clients, client)
 	}
 	s.mu.Unlock()
 
-	for _, conn := range clients {
-		if err := conn.WriteJSON(message); err != nil {
+	for _, client := range clients {
+		if err := client.writeJSON(message); err != nil {
 			s.mu.Lock()
-			delete(s.clients, conn)
+			delete(s.clients, client)
 			s.mu.Unlock()
-			_ = conn.Close()
+			_ = client.conn.Close()
 		}
+	}
+}
+
+func (s *deckServer) snapshotSystemInfo() systemInfo {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	return systemInfo{
+		Timestamp:     time.Now().Format(time.RFC3339),
+		Hostname:      hostname,
+		OS:            runtime.GOOS,
+		Arch:          runtime.GOARCH,
+		NumCPU:        runtime.NumCPU(),
+		Goroutines:    runtime.NumGoroutine(),
+		MemoryAllocMB: float64(memStats.Alloc) / 1024 / 1024,
+		AppUptimeSec:  int64(time.Since(s.startedAt).Seconds()),
 	}
 }
 
