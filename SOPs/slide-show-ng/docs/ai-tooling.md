@@ -12,16 +12,18 @@ Treat AI-generated UI as presentation code only.
 
 ## Recommended Integration Model
 
-1. Generate or import standard web UI into `frontend/src/`.
+1. Generate or import standard web UI into `frontend/src/decks/<deck-name>/`.
 2. Keep the generated components mostly intact.
-3. Wrap them with the framework hooks from `frontend/src/framework/`.
-4. Connect privileged backend features through the generic `backend` client.
+3. Use hooks from `frontend/src/framework/` to add slideshow/runtime behavior.
+4. Connect privileged backend features through the generic `backend` client or thin backend hooks.
+5. Point `frontend/src/DeckApp.tsx` at the active deck entry.
 
 ## What To Put In Generated Frontend Code
 
 - slide layouts
 - typography, colors, spacing, and motion
 - local navigation UI
+- present button placement and control-bar layout
 - presentation-specific data models
 - animation and transition choreography
 
@@ -31,6 +33,16 @@ Treat AI-generated UI as presentation code only.
 - network round-trips for every navigation action
 - backend-confirmed animation sequencing
 - Go-owned slide arrays or deck state machines
+
+## File Placement
+
+Use this split to keep framework and content decoupled:
+
+- `frontend/src/framework/`: reusable hooks and low-level helpers only
+- `frontend/src/decks/<deck-name>/`: deck-specific React components, CSS, and assets
+- `frontend/src/DeckApp.tsx`: active deck selector or direct deck export
+
+Avoid moving deck-specific controls or theme styles into `frontend/src/framework/`.
 
 ## Fullscreen Semantics
 
@@ -143,6 +155,18 @@ useBackendEvent('system_info_updated', (payload) => {
 const { quit, isQuitting } = useAppQuit();
 ```
 
+When `useBackendQuery` receives a complex payload, pass `options.key` explicitly:
+
+```ts
+const { data } = useBackendQuery(
+  'read_file',
+  { path: currentPath },
+  { key: currentPath },
+);
+```
+
+This key is the query identity used by the hook. The rule is about stable refetch semantics, not backend type safety.
+
 ## Backend Contract
 
 The backend should be used for:
@@ -164,37 +188,46 @@ The backend should not be used for:
 A generated page can stay visually untouched while you add a thin runtime wrapper:
 
 ```tsx
-function DeckShell() {
-  const deck = useDeckState(slides);
-  const { isFullscreen, enter, exit } = useFullscreen();
-
-  async function startShow() {
-    await enter();
-    deck.goTo(1);
-  }
-
-  async function toggleFullscreenMode() {
-    if (isFullscreen) {
-      await exit();
-      return;
-    }
-
-    await enter();
-  }
+function GeneratedDeckPage({ slides }: { slides: Slide[] }) {
+  const runtime = usePresentationRuntime(slides);
+  const animatedDeck = useAnimatedDeck({
+    currentIndex: runtime.currentIndex,
+    total: runtime.total,
+    goTo: runtime.goTo,
+  });
 
   useKeyboardBindings([
-    { keys: ['ArrowRight'], onKey: deck.next },
-    { keys: ['ArrowLeft'], onKey: deck.previous },
-    { keys: ['f', 'F'], onKey: () => void toggleFullscreenMode() },
+    { keys: ['ArrowRight'], onKey: animatedDeck.next },
+    { keys: ['ArrowLeft'], onKey: animatedDeck.previous },
+    { keys: ['f', 'F'], onKey: () => void runtime.toggleFullscreenMode() },
   ]);
 
   return (
-    <GeneratedDeck
-      currentIndex={deck.currentIndex}
-      onJump={deck.goTo}
-      onStartShow={() => void startShow()}
-      onTogglePresent={() => void toggleFullscreenMode()}
-    />
+    <>
+      {slides.map((slide, index) => {
+        const className = [
+          'slide',
+          runtime.currentIndex === index ? 'active' : '',
+          animatedDeck.exitingIndex === index ? 'exit' : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
+
+        return (
+          <section className={className} key={index}>
+            {/* generated content goes here */}
+          </section>
+        );
+      })}
+
+      <button onClick={() => void runtime.startShow()} type="button">
+        开始放映
+      </button>
+
+      <button onClick={() => void runtime.toggleFullscreenMode()} type="button">
+        {runtime.presentButtonLabel}
+      </button>
+    </>
   );
 }
 ```

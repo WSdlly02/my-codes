@@ -9,7 +9,10 @@ This repository is intended to be a framework, not a fixed deck template. The fr
 - `main.go`: local server entry
 - `handlers.go`: minimal REST / WebSocket capability server
 - `frontend/`: Vite frontend project
-- `frontend/src/framework/`: reusable frontend runtime primitives
+- `frontend/src/main.tsx`: frontend bootstrap
+- `frontend/src/DeckApp.tsx`: current default deck entry
+- `frontend/src/decks/demo/`: demo content layer, theme, and slide markup
+- `frontend/src/framework/`: reusable runtime hooks only, with no opinionated UI shell
 - `frontend/dist/`: embedded build output
 - `docs/ai-tooling.md`: integration guide for AI/web design tools
 - `docs/backend-integration.md`: backend capability design and protocol guide
@@ -35,6 +38,13 @@ go build
 ## Migration
 
 - Standard React migration guide: `docs/migrating-standard-react.md`
+
+## Usage Model
+
+- Put reusable runtime logic in `frontend/src/framework/`.
+- Put actual deck content, layout, controls, and styling in `frontend/src/decks/<name>/`.
+- Keep `frontend/src/DeckApp.tsx` as the active deck entrypoint so swapping demos or real decks stays localized.
+- The framework should expose hooks and abstract helpers only. It should not prescribe control bars, button placement, or theme design.
 
 ## Slideshow Flow
 
@@ -83,8 +93,13 @@ The reusable frontend layer lives in `frontend/src/framework/`:
 - `useKeyboardBindings`: reusable key binding hook
 - `useFullscreen`: fullscreen state and toggles
 - `usePresentationRuntime`: unified slideshow runtime for preview, fullscreen, and app quit semantics
+- `useAnimatedDeck`: optional animated navigation helper
+- `useSwipeNavigation`: optional swipe helper
 - `useBackendEvent` / `useBackendQuery` / `useAppQuit`: optional thin backend helper hooks
+- `useBackendCapabilities`: capability discovery helper for `/api/capabilities`
 - `backend`: generic REST/WebSocket bridge with no slide-specific assumptions
+
+`useBackendQuery` has one deliberate constraint: primitive payloads can infer their query identity, but object/array payloads must pass `options.key`. This is to keep query identity explicit and stable, not to enforce backend-side type safety.
 
 ## Backend Surface
 

@@ -21,6 +21,7 @@ Keep as much standard frontend code unchanged as possible.
 ## What Usually Changes
 
 - wrap page switching with `usePresentationRuntime()`
+- optionally wrap navigation animation with `useAnimatedDeck()`
 - connect left and right navigation through the runtime
 - connect fullscreen behavior through the runtime
 - wire preview-page `开始放映`
@@ -30,31 +31,56 @@ Keep as much standard frontend code unchanged as possible.
 
 ```tsx
 import {
+  useAnimatedDeck,
   useKeyboardBindings,
   usePresentationRuntime,
 } from './framework';
 
-function DeckShell({ slides }: { slides: Slide[] }) {
+function ProductDeck({ slides }: { slides: Slide[] }) {
   const runtime = usePresentationRuntime(slides);
+  const animatedDeck = useAnimatedDeck({
+    currentIndex: runtime.currentIndex,
+    total: runtime.total,
+    goTo: runtime.goTo,
+  });
 
   useKeyboardBindings([
-    { keys: ['ArrowRight'], onKey: runtime.next },
-    { keys: ['ArrowLeft'], onKey: runtime.previous },
+    { keys: ['ArrowRight'], onKey: animatedDeck.next },
+    { keys: ['ArrowLeft'], onKey: animatedDeck.previous },
     { keys: ['f', 'F'], onKey: () => void runtime.toggleFullscreenMode() },
   ]);
 
   return (
-    <GeneratedDeck
-      currentIndex={runtime.currentIndex}
-      isFullscreen={runtime.isFullscreen}
-      onJump={runtime.goTo}
-      onStartShow={() => void runtime.startShow()}
-      onTogglePresent={() => void runtime.toggleFullscreenMode()}
-      onQuit={() => void runtime.quitApp()}
-    />
+    <main>
+      {slides.map((slide, index) => (
+        <section key={index}>
+          {/* your existing layout */}
+        </section>
+      ))}
+
+      <button onClick={() => void runtime.startShow()} type="button">
+        开始放映
+      </button>
+
+      <button onClick={() => void runtime.toggleFullscreenMode()} type="button">
+        {runtime.presentButtonLabel}
+      </button>
+
+      <button onClick={() => void runtime.quitApp()} type="button">
+        退出程序
+      </button>
+    </main>
   );
 }
 ```
+
+## File Structure Recommendation
+
+- `frontend/src/framework/`: framework-owned hooks only
+- `frontend/src/decks/<deck-name>/`: deck content, deck CSS, deck-specific controls
+- `frontend/src/DeckApp.tsx`: exports the currently active deck
+
+This keeps future deck swaps and backports localized to content files instead of framework files.
 
 ## Semantic Rules To Preserve
 
@@ -89,5 +115,14 @@ The framework also includes optional frontend-side helpers for backend access:
 - `useBackendEvent`
 - `useBackendQuery`
 - `useAppQuit`
+- `useBackendCapabilities`
 
 These are convenience hooks only. They are not required for migration.
+
+`useBackendQuery` treats `options.key` as the query identity. If the payload is an object or array, provide an explicit key instead of relying on implicit serialization:
+
+```ts
+const { data } = useBackendQuery('read_file', { path: currentPath }, { key: currentPath });
+```
+
+This rule exists to keep refetch behavior predictable and query identity stable. It is not a backend type-safety feature.

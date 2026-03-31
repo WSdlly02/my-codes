@@ -14,9 +14,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -37,6 +39,9 @@ func main() {
 		shutdownOnce.Do(func() {
 			if managed && browserCmd != nil && browserCmd.Process != nil {
 				_ = browserCmd.Process.Kill()
+			}
+			if cleanup != nil {
+				cleanup()
 			}
 			if httpServer != nil {
 				shutdownServer(httpServer)
@@ -75,6 +80,10 @@ func main() {
 	}
 	defer cleanup()
 
+	// Handle OS signals for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
 	if managed {
 		go func() {
 			_ = browserCmd.Wait()
@@ -82,13 +91,18 @@ func main() {
 		}()
 	}
 
-	if err := <-serverErr; err != nil {
-		log.Fatal(err)
+	select {
+	case <-sigChan:
+		shutdownApp()
+	case err := <-serverErr:
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
 func openBrowser(url string) (*exec.Cmd, bool, func(), error) {
-	profileDir, err := os.MkdirTemp("", "pitchdeck-browser-*")
+	profileDir, err := os.MkdirTemp("", "slide-show-ng-browser-*")
 	if err != nil {
 		return nil, false, func() {}, err
 	}
@@ -157,7 +171,6 @@ func shutdownServer(server *http.Server) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)
-	os.Exit(0)
 }
 
 func randomToken() string {
