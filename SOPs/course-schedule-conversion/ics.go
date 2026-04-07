@@ -40,6 +40,7 @@ func generateICSFromCourseInfo(courseInfo json.RawMessage, firstDayOfSemester, t
 
 	dtStamp := time.Now().UTC().Format("20060102T150405Z")
 	eventCount := 0
+	eventCount += writeTeachingWeekReminderEvents(&b, semesterStart, timezone, dtStamp, loc)
 	for _, lesson := range lessons {
 		if len(lesson.ArrangeInfo) == 0 {
 			continue
@@ -96,6 +97,36 @@ func generateICSFromCourseInfo(courseInfo json.RawMessage, firstDayOfSemester, t
 	return b.String(), nil
 }
 
+func writeTeachingWeekReminderEvents(b *strings.Builder, semesterStart time.Time, timezone, dtStamp string, loc *time.Location) int {
+	count := 0
+	for week := 1; week <= TeachingWeekCount; week++ {
+		reminderDate := semesterStart.AddDate(0, 0, (week-1)*7)
+		startAt, err := combineDateAndClock(reminderDate, "08:00", loc)
+		if err != nil {
+			continue
+		}
+		endAt := startAt.Add(5 * time.Minute)
+		summary := fmt.Sprintf("第%d教学周", week)
+		description := fmt.Sprintf("这是第%d教学周", week)
+
+		writeICSLine(b, "BEGIN:VEVENT")
+		writeICSLine(b, "UID:"+buildTeachingWeekUID(week))
+		writeICSLine(b, "DTSTAMP:"+dtStamp)
+		writeICSLine(b, "DTSTART;TZID="+timezone+":"+startAt.Format("20060102T150405"))
+		writeICSLine(b, "DTEND;TZID="+timezone+":"+endAt.Format("20060102T150405"))
+		writeICSLine(b, "SUMMARY:"+escapeICSText(summary))
+		writeICSLine(b, "DESCRIPTION:"+escapeICSText(description))
+		writeICSLine(b, "BEGIN:VALARM")
+		writeICSLine(b, "ACTION:DISPLAY")
+		writeICSLine(b, "DESCRIPTION:"+escapeICSText(description))
+		writeICSLine(b, "TRIGGER:PT0M")
+		writeICSLine(b, "END:VALARM")
+		writeICSLine(b, "END:VEVENT")
+		count++
+	}
+	return count
+}
+
 func resolveUnitRange(startUnit, endUnit int) (string, string, bool) {
 	start, ok := UnitToTimes[startUnit]
 	if !ok {
@@ -119,6 +150,12 @@ func combineDateAndClock(date time.Time, clock string, loc *time.Location) (time
 
 func buildEventUID(lesson Lesson, arrange ArrangeInfo, week int) string {
 	raw := fmt.Sprintf("%s|%s|%d|%d|%d|%d", lesson.No, lesson.Name, week, arrange.WeekDay, arrange.StartUnit, arrange.EndUnit)
+	sum := sha1.Sum([]byte(raw))
+	return hex.EncodeToString(sum[:]) + "@course-schedule-conversion"
+}
+
+func buildTeachingWeekUID(week int) string {
+	raw := fmt.Sprintf("teaching-week|%s|%d", FirstDayOfSemester, week)
 	sum := sha1.Sum([]byte(raw))
 	return hex.EncodeToString(sum[:]) + "@course-schedule-conversion"
 }
