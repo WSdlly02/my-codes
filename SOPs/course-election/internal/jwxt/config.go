@@ -9,5 +9,4 @@ const (
 	cookieFile       = cacheDir + "/cookies.json"
 	chromeProfile    = "./chrome-profile"
 	semesterID       = "396"
-	projectID        = "1"
 )

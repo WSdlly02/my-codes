@@ -33,10 +33,18 @@ func newHTTPTransport() *http.Transport {
 }
 
 func getWithRetry(client *http.Client, endpoint string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	return doRequestWithRetry(client, req)
+}
+
+func doRequestWithRetry(client *http.Client, req *http.Request) (*http.Response, error) {
 	var lastErr error
 
 	for attempt := 0; attempt < retryAttempts; attempt++ {
-		resp, err := client.Get(endpoint)
+		resp, err := client.Do(req.Clone(req.Context()))
 		if err == nil && !shouldRetryStatus(resp.StatusCode) {
 			return resp, nil
 		}

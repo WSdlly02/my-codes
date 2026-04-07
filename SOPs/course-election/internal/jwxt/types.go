@@ -34,11 +34,14 @@ type channelCache struct {
 }
 
 type Lesson struct {
-	ID                 int           `json:"id"`
-	No                 string        `json:"no"`
-	Name               string        `json:"name"`
-	Code               string        `json:"code"`
-	Credits            float64       `json:"credits"`
+	ID      int     `json:"id"`
+	No      string  `json:"no"`
+	Name    string  `json:"name"`
+	Code    string  `json:"code"`
+	Credits float64 `json:"credits"`
+	// CourseID 是服务端课程实体的元数据字段，不等于 CLI/文案里的“课程ID”。
+	// 当前未被任何地方使用
+	// 对用户可见的“课程ID”统一指 Lesson.ID。
 	CourseID           int           `json:"courseId"`
 	StartWeek          int           `json:"startWeek"`
 	EndWeek            int           `json:"endWeek"`
