@@ -75,17 +75,13 @@
 
           exposedPackages = {
             # Packages here will be exposed and used as libraries in other parts of the flake
-            audio-relay = callPackage ./Nix/pkgs/audio-relay.nix { };
-            cockpit-tools = callPackage ./Nix/pkgs/cockpit-tools.nix { };
             mihomo-updater-updater = callPackage ./Nix/pkgs/mihomo-updater-updater.nix { };
             ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
-            qoder = callPackage ./Nix/pkgs/qoder.nix { };
             # Haskell packages
             id-generator = haskellPackages.callPackage ./Nix/pkgs/id-generator.nix { };
             haskellEnv = haskellPackages.callPackage ./Nix/pkgs/haskellEnv.nix { };
             # Python packages
-            pystun3 = python3Packages.callPackage ./Nix/pkgs/pystun3.nix { };
             python3Env = python3Packages.callPackage ./Nix/pkgs/python3Env.nix { };
             python3FHSEnv = callPackage ./Nix/pkgs/python3FHSEnv.nix { };
           };

@@ -44,18 +44,14 @@ python.withPackages (
   f: # f <- python3Packages
   with f;
   [
-    matplotlib
-    numpy
+    dbus-python
     pandas
     psutil
+    pydantic
     pyyaml
+    urllib3
     requests
-    scikit-learn
-    scipy
-    scrapy
-    sympy
     virtualenv
-    yfinance
   ]
   ++ (extraPackages f)
 )
