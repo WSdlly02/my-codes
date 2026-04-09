@@ -269,15 +269,27 @@ body {
 }
 
 .present-fab {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  z-index: 24;
   background: color-mix(in srgb, var(--accent) 88%, black 12%);
   color: white;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  transition:
+    transform var(--transition),
+    opacity var(--transition),
+    box-shadow var(--transition);
 }
 
 .primary-action:hover,
 .danger-action:hover,
 .present-fab:hover {
   transform: translateY(-1px);
+}
+
+.present-fab:hover {
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.34);
 }
 
 .primary-action:disabled,
