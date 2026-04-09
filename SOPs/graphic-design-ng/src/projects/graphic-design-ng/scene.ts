@@ -1,9 +1,9 @@
-import { A3_PORTRAIT, createPosterSceneSize } from "../constants/paper";
-import type { PosterScene } from "../types/scene";
+import { A3_PORTRAIT, createPosterSceneSize } from "../../constants/paper";
+import type { PosterScene } from "../../types/scene";
 
 const size = createPosterSceneSize(A3_PORTRAIT, 300);
 
-export const sampleScene: PosterScene = {
+export const graphicDesignNgScene: PosterScene = {
   ...size,
   background: {
     fill: "#f7f0e8",

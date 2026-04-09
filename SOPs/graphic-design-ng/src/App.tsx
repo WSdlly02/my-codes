@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { sampleScene } from "./demo/sampleScene";
 import { exportPosterAsJpeg, renderPoster } from "./render/exportJpeg";
+import { defaultProject } from "./projects";
 
 const PREVIEW_WIDTH = 420;
 
@@ -8,6 +8,8 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isRendering, setIsRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const project = defaultProject;
+  const scene = project.scene;
 
   useEffect(() => {
     let cancelled = false;
@@ -18,13 +20,13 @@ function App() {
 
       try {
         await document.fonts.ready;
-        const posterCanvas = await renderPoster(sampleScene);
+        const posterCanvas = await renderPoster(scene);
         if (cancelled || !canvasRef.current) {
           return;
         }
 
-        const previewScale = PREVIEW_WIDTH / sampleScene.width;
-        const previewHeight = Math.round(sampleScene.height * previewScale);
+        const previewScale = PREVIEW_WIDTH / scene.width;
+        const previewHeight = Math.round(scene.height * previewScale);
 
         canvasRef.current.width = PREVIEW_WIDTH;
         canvasRef.current.height = previewHeight;
@@ -54,7 +56,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [scene]);
 
   return (
     <main
@@ -81,11 +83,10 @@ function App() {
           Poster Preview
         </p>
         <h1 style={{ margin: "12px 0 8px", fontSize: "32px", lineHeight: 1.05 }}>
-          A3 / 300dpi render pipeline
+          {project.name}
         </h1>
         <p style={{ margin: 0, lineHeight: 1.6, color: "#374151" }}>
-          2D layout is composited on Canvas. 3D nodes are rendered with Three.js and merged into the
-          same export surface before JPEG output.
+          {project.description}
         </p>
         <div
           style={{
@@ -124,8 +125,9 @@ function App() {
               React + TypeScript + Canvas + Three.js
             </h2>
             <p style={{ margin: 0, color: "#1f2937", lineHeight: 1.7 }}>
-              This repo is set up around a scene schema, a 2D compositor, and a 3D subscene renderer.
-              That keeps poster templates reusable and avoids rebuilding the stack per project.
+              The framework layer stays in the renderer and schema modules. Poster-specific content now
+              lives under <code>src/projects</code> so each new poster can be added without changing the
+              render core.
             </p>
           </div>
 
@@ -162,7 +164,7 @@ function App() {
           <div style={{ display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
             <button
               type="button"
-              onClick={() => void exportPosterAsJpeg(sampleScene)}
+              onClick={() => void exportPosterAsJpeg(scene, project.exportFileName)}
               disabled={isRendering}
               style={{
                 border: 0,
@@ -176,7 +178,7 @@ function App() {
               Export A3 JPG
             </button>
             <span style={{ color: "#374151" }}>
-              {isRendering ? "Rendering preview..." : "Export is configured for 3508 x 4961 px."}
+              {isRendering ? "Rendering preview..." : `Export is configured for ${scene.width} x ${scene.height} px.`}
             </span>
           </div>
 

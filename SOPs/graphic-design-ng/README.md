@@ -50,9 +50,19 @@ npm run build
 
 This produces the production bundle in `dist/`.
 
+## Layer split
+
+The repository is organized so framework code and poster content do not live in the same place.
+
+- Framework layer: [src/types](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/types/scene.ts), [src/constants](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/constants/paper.ts), [src/render](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/render/renderScene.ts)
+- Content layer: [src/projects](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/projects/index.ts)
+- App shell: [src/App.tsx](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/App.tsx)
+
+The app shell only loads a project definition and passes its scene to the renderer. The renderer does not import any project-specific content.
+
 ## How to use
 
-The renderer is driven by a typed scene object. The sample entry is in [src/demo/sampleScene.ts](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/demo/sampleScene.ts).
+The renderer is driven by a typed scene object. The current sample poster is registered as a project in [src/projects/graphic-design-ng/index.ts](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/projects/graphic-design-ng/index.ts).
 
 ### 1. Define poster size
 
@@ -67,11 +77,22 @@ Supported node types are defined in [src/types/scene.ts](/home/wsdlly02/Document
 - `image`
 - `mesh3d`
 
-### 3. Preview in the app
+### 3. Create a poster project
 
-The preview page is [src/App.tsx](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/App.tsx). Replace `sampleScene` with your own scene to preview another poster.
+Create a new folder under `src/projects/<your-project-id>/` with:
 
-### 4. Export JPG
+- `scene.ts`: the poster scene
+- `index.ts`: project metadata and export filename
+
+Use [src/projects/graphic-design-ng/scene.ts](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/projects/graphic-design-ng/scene.ts) as the reference template.
+
+Then register it in [src/projects/index.ts](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/projects/index.ts).
+
+### 4. Preview in the app
+
+The preview page is [src/App.tsx](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/App.tsx). It reads the active project from `src/projects` and renders its scene.
+
+### 5. Export JPG
 
 Call `exportPosterAsJpeg(scene)` from [src/render/exportJpeg.ts](/home/wsdlly02/Documents/my-codes/SOPs/graphic-design-ng/src/render/exportJpeg.ts) to generate the final A3 JPG in the browser.
 
@@ -80,8 +101,16 @@ Call `exportPosterAsJpeg(scene)` from [src/render/exportJpeg.ts](/home/wsdlly02/
 - `src/types`: scene schema
 - `src/constants`: paper and unit helpers
 - `src/render`: 2D compositor, 3D renderer, export pipeline
-- `src/demo`: sample poster scene
-- `src/App.tsx`: preview and export UI
+- `src/projects`: poster content and project registration
+- `src/App.tsx`: preview and export shell
+
+## Add a new poster
+
+1. Copy `src/projects/graphic-design-ng` to a new folder under `src/projects`.
+2. Change the scene content in `scene.ts`.
+3. Change `id`, `name`, `description`, and `exportFileName` in `index.ts`.
+4. Register the project in `src/projects/index.ts`.
+5. Point `defaultProject` to the new project, or replace the selection logic with router/state later.
 
 ## Current scope
 
@@ -98,6 +127,10 @@ It does not yet include:
 - advanced text layout
 - template persistence
 - batch rendering
+
+## Next production step
+
+With the layer split in place, you can start building real posters without contaminating the renderer core. The next practical step is to create the first real project under `src/projects/<poster-id>/` and keep all visual content, copy, and assets there.
 
 ## First build target
 
