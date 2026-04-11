@@ -3,7 +3,7 @@
   mkShell,
   pkgs,
   symlinkJoin,
-  enableRocmSupport ? false,
+  rocmSupport ? false,
 }:
 let
   vendorComposableKernel = !pkgs.rocmPackages.composable_kernel.anyMfmaTarget;
@@ -86,7 +86,7 @@ mkShell rec {
       # nodejs
       # npm-check-updates
     ]
-    ++ lib.optionals enableRocmSupport [
+    ++ lib.optionals rocmSupport [
       rocmtoolkit_joined
     ];
   shellHook = ''

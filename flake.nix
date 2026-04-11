@@ -15,7 +15,7 @@
         "aarch64-linux"
       ];
       # this function folds over all exposed systems and merges the results
-      forExposedSystems = f: builtins.foldl' lib.recursiveUpdate { } (map f exposedSystems);
+      forExposedSystems = f: lib.foldl' lib.recursiveUpdate { } (map f exposedSystems);
     in
     {
       lib.pkgs' =
@@ -30,7 +30,6 @@
           config = {
             allowAliases = false;
             allowUnfree = true;
-            rocmSupport = true; # Notice !!!
           }
           // config;
           overlays = [
@@ -43,14 +42,6 @@
       overlays = {
         default = final: prev: {
           # Overlays here will be applied to all packages
-          python3 = prev.python3.override {
-            packageOverrides =
-              pyfinal: pyprev:
-              builtins.mapAttrs (
-                _: pypkg: if pypkg ? rocmSupport then pypkg.override { rocmSupport = true; } else pypkg
-              ) pyprev;
-          };
-          python3Packages = final.python3.pkgs;
         };
         exposedPackages =
           # Packages here will be exposed and used as libraries in other parts of the flake
@@ -67,7 +58,7 @@
         devShells."${system}" = rec {
           default = binEnv;
           binEnv = callPackage ./Nix/devShells-binEnv.nix { };
-          binEnvWithRocm = callPackage ./Nix/devShells-binEnv.nix { enableRocmSupport = true; };
+          binEnvWithRocm = callPackage ./Nix/devShells-binEnv.nix { rocmSupport = true; };
         };
         formatter."${system}" = nixfmt-tree;
         legacyPackages."${system}" = {
@@ -83,7 +74,6 @@
             haskellEnv = haskellPackages.callPackage ./Nix/pkgs/haskellEnv.nix { };
             # Python packages
             python3Env = python3Packages.callPackage ./Nix/pkgs/python3Env.nix { };
-            python3FHSEnv = callPackage ./Nix/pkgs/python3FHSEnv.nix { };
           };
           libraryPackages = {
             # Packages here will be used as library but won't be exposed
