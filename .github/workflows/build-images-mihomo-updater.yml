@@ -51,9 +51,6 @@ jobs:
           file: SOPs/mihomo-updater/Dockerfile
           platforms: linux/amd64
           provenance: false
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/${{ env.IMAGE_NAME }}:amd64
           outputs: |
             type=image,name=${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=mihomo-updater-amd64
@@ -93,9 +90,6 @@ jobs:
           file: SOPs/mihomo-updater/Dockerfile
           platforms: linux/arm64
           provenance: false
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/${{ env.IMAGE_NAME }}:arm64
           outputs: |
             type=image,name=${{ env.REGISTRY }}/${{ env.REPO_LOWER }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=mihomo-updater-arm64

@@ -188,6 +188,7 @@ fn group_by_size(files: Vec<FileInfo>) -> Vec<FileInfo> {
 
     size_groups
         .into_values()
+        // 重复文件会导致一个u64对应多个FileInfo，所以只保留那些有重复的组
         .filter(|group| group.len() > 1) // filter out duplicates
         .flatten()
         .collect()
