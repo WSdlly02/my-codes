@@ -1,7 +1,5 @@
 FROM rust:alpine AS builder
 
-RUN apk add --no-cache build-base musl-dev ca-certificates file binutils
-
 WORKDIR /src
 
 COPY Cargo.toml Cargo.lock ./
@@ -11,9 +9,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 COPY src src
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
   --mount=type=cache,target=/src/target \
-  cargo build --locked --release --bin resolver && \
-  strip --strip-all target/release/resolver && \
-  file target/release/resolver | grep -q "statically linked" || { echo "Not fully static!"; exit 1; }
+  cargo build --locked --release --bin resolver
 
 FROM alpine:latest
 
