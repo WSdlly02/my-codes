@@ -1,0 +1,40 @@
+[package]
+name = "mihomo-updater"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "resolver"
+path = "src/bin/resolver.rs"
+[[bin]]
+name = "updater"
+path = "src/bin/updater.rs"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+futures = "0.3"
+reqwest = { version = "0.13" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+  "io-util",
+  "fs",
+  "macros",
+  "net",
+  "process",
+  "rt-multi-thread",
+  "signal",
+  "time",
+] }
+tracing = "0.1"
+time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"       # 跨 crate 链接时全局优化，性能提升 10-30%
+codegen-units = 1 # 禁止并行编译，允许更激进的内联优化
+strip = true      # 去除符号表，减小体积
+panic = "abort"   # 减小体积并略微提升性能
