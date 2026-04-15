@@ -8,12 +8,16 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use mimalloc::MiMalloc;
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::to_string;
 use tokio::{io::AsyncWriteExt, process::Command};
 use tracing::{error, info, warn};
 use url::Url;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 #[derive(Clone)]
 struct AppState {
