@@ -66,7 +66,7 @@
 
           exposedPackages = {
             # Packages here will be exposed and used as libraries in other parts of the flake
-            mihomo-updater-updater = callPackage ./Nix/pkgs/mihomo-updater-updater.nix { };
+            mihomo-updater = rustPlatform.callPackage ./Nix/pkgs/mihomo-updater.nix { };
             ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
             ocs-desktop = callPackage ./Nix/pkgs/ocs-desktop.nix { };
             # Haskell packages

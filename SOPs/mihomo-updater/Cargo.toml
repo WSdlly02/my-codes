@@ -1,13 +1,13 @@
 [package]
 name = "mihomo-updater"
-version = "0.1.0"
+version = "1.0.1"
 edition = "2024"
 
 [[bin]]
 name = "resolver"
 path = "src/bin/resolver.rs"
 [[bin]]
-name = "updater"
+name = "mihomo-updater"
 path = "src/bin/updater.rs"
 
 [dependencies]
