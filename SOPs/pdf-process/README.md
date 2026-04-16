@@ -7,7 +7,7 @@
 - `export-imgs.py`: 将单个 PDF 导出为图片序列
 - `ocr-local.py`: 批量处理目录中的 PDF，先转图片，再调用 `image-process/ocr-local.py`
 - `ocr-genai.py`: 使用 Gemini 直接把 PDF 提取成 Markdown
-- `merge-imgs.py`: 从分页图片 URL 批量下载图片并合并成 PDF
+- `merge-imgs.py`: 从分页图片 URL 下载后合并 PDF，或直接把本地图片目录按顺序合并成 PDF
 - `.envrc`: 创建虚拟环境并安装依赖
 - `requirements.txt`: Python 依赖
 
@@ -82,3 +82,22 @@ python ocr-genai.py /path/to/pdf_dir \
   --output-dir genai_ocr_outputs \
   --force
 ```
+
+### 4. 图片合并为 PDF
+
+从分页图片 URL 下载并合并：
+
+```bash
+python merge-imgs.py https://example.com/book/ \
+  --extension png \
+  --output-pdf output.pdf
+```
+
+直接读取本地图片目录并按文件名中的数字顺序合并：
+
+```bash
+python merge-imgs.py --image-dir /path/to/image_dir \
+  --output-pdf output.pdf
+```
+
+例如目录中有 `1.png`、`2.png`、`10.png` 时，会按 `1 -> 2 -> 10` 的顺序合并。

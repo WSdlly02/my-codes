@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -24,10 +25,14 @@ DEFAULT_HEADERS = {
     "Sec-Fetch-Site": "cross-site",
 }
 
+SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+
 
 def build_session(headers: dict, retries: int) -> requests.Session:
     session = requests.Session()
-    retry = Retry(total=retries, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    retry = Retry(
+        total=retries, backoff_factor=1, status_forcelist=[500, 502, 503, 504]
+    )
     adapter = HTTPAdapter(max_retries=retry)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
@@ -64,10 +69,9 @@ def download_images(
     extension: str,
     min_bytes: int,
     max_failures: int,
-):
+) -> Path:
     ensure_resume_consistency(folder, base_url)
     page = start_page
-    downloaded_files = []
     consecutive_failures = 0
 
     print("开始下载图片...")
@@ -75,7 +79,6 @@ def download_images(
         file_path = folder / f"{page}.{extension}"
         if file_path.exists():
             print(f"已存在，跳过: {file_path.name}")
-            downloaded_files.append(file_path)
             page += 1
             consecutive_failures = 0
             continue
@@ -86,7 +89,6 @@ def download_images(
             if response.status_code == 200 and len(response.content) >= min_bytes:
                 file_path.write_bytes(response.content)
                 print(f"下载成功: {file_path.name}")
-                downloaded_files.append(file_path)
                 page += 1
                 consecutive_failures = 0
                 time.sleep(0.2)
@@ -101,16 +103,46 @@ def download_images(
             time.sleep(2)
 
     print(f"下载结束：连续失败 {consecutive_failures} 次，第 {page} 页可能不存在")
-    return downloaded_files
+    return folder
 
 
-def merge_images_to_pdf(image_paths, output_pdf: Path) -> int:
+def image_sort_key(image_path: Path) -> tuple[int, str]:
+    match = re.search(r"(\d+)$", image_path.stem)
+    if match:
+        return int(match.group(1)), image_path.name
+    return 10**18, image_path.name
+
+
+def collect_images_from_folder(folder: Path) -> list[Path]:
+    if not folder.exists():
+        print(f"图片目录不存在: {folder}")
+        return []
+    if not folder.is_dir():
+        print(f"指定的图片路径不是目录: {folder}")
+        return []
+
+    image_paths = [
+        path
+        for path in folder.iterdir()
+        if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+    ]
+    image_paths.sort(key=image_sort_key)
+
     if not image_paths:
-        print("没有下载到任何图片，退出。")
+        print(f"目录中没有可合并的图片: {folder}")
+        return []
+
+    print(f"从目录读取到 {len(image_paths)} 张图片: {folder}")
+    return image_paths
+
+
+def merge_images_to_pdf(image_paths: list[Path], output_pdf: Path) -> int:
+    if not image_paths:
+        print("没有可合并的图片，退出。")
         return 1
 
     valid_images = []
-    for image_path in sorted(image_paths, key=lambda item: int(item.stem)):
+    for image_path in image_paths:
         try:
             with Image.open(image_path) as img:
                 valid_images.append(img.convert("RGB"))
@@ -127,9 +159,37 @@ def merge_images_to_pdf(image_paths, output_pdf: Path) -> int:
     return 0
 
 
+def resolve_image_paths(args: argparse.Namespace) -> list[Path]:
+    if args.image_dir:
+        image_dir = Path(args.image_dir).expanduser().resolve()
+        return collect_images_from_folder(image_dir)
+
+    session = build_session(DEFAULT_HEADERS, retries=3)
+    download_folder = download_images(
+        session=session,
+        base_url=normalize_base_url(args.base_url),
+        folder=Path(args.folder).expanduser().resolve(),
+        start_page=args.start_page,
+        extension=args.extension.lstrip("."),
+        min_bytes=args.min_bytes,
+        max_failures=args.max_failures,
+    )
+    return collect_images_from_folder(download_folder)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="按页码下载图片并合并成 PDF。")
-    parser.add_argument("base_url", help="分页图片的基础 URL，以页码和扩展名结尾前的部分为准")
+    parser = argparse.ArgumentParser(
+        description="按页码下载图片或读取本地图片目录并合并成 PDF。"
+    )
+    parser.add_argument(
+        "base_url",
+        nargs="?",
+        help="分页图片的基础 URL，以页码和扩展名结尾前的部分为准",
+    )
+    parser.add_argument(
+        "--image-dir",
+        help="本地图片目录，目录内图片将按文件名中的数字顺序合并",
+    )
     parser.add_argument(
         "-s",
         "--start-page",
@@ -168,21 +228,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    folder = Path(args.folder).expanduser().resolve()
     output_pdf = Path(args.output_pdf).expanduser().resolve()
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
 
-    session = build_session(DEFAULT_HEADERS, retries=3)
-    downloaded_files = download_images(
-        session=session,
-        base_url=normalize_base_url(args.base_url),
-        folder=folder,
-        start_page=args.start_page,
-        extension=args.extension.lstrip("."),
-        min_bytes=args.min_bytes,
-        max_failures=args.max_failures,
-    )
-    return merge_images_to_pdf(downloaded_files, output_pdf)
+    if not args.image_dir and not args.base_url:
+        parser.error("必须提供 base_url，或使用 --image-dir 指定本地图片目录")
+
+    image_paths = resolve_image_paths(args)
+    return merge_images_to_pdf(image_paths, output_pdf)
 
 
 if __name__ == "__main__":
