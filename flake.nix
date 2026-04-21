@@ -59,6 +59,12 @@
           default = binEnv;
           binEnv = callPackage ./Nix/devShells-binEnv.nix { };
           binEnvWithRocm = callPackage ./Nix/devShells-binEnv.nix { rocmSupport = true; };
+          tmp = binEnv.override {
+            extraPkgs = [
+              libreoffice-fresh
+              poppler-utils
+            ];
+          };
         };
         formatter."${system}" = nixfmt-tree;
         legacyPackages."${system}" = {

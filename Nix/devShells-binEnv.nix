@@ -4,6 +4,7 @@
   pkgs,
   symlinkJoin,
   rocmSupport ? false,
+  extraPkgs ? [ ],
 }:
 let
   vendorComposableKernel = !pkgs.rocmPackages.composable_kernel.anyMfmaTarget;
@@ -86,9 +87,11 @@ mkShell rec {
       # nodejs
       # npm-check-updates
     ]
+    ++ extraPkgs
     ++ lib.optionals rocmSupport [
       rocmtoolkit_joined
     ];
+
   shellHook = ''
     export LD_LIBRARY_PATH=${lib.makeLibraryPath packages}:$LD_LIBRARY_PATH
   '';
