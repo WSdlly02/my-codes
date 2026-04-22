@@ -14,6 +14,7 @@
 *.exe
 *.ics
 *.png
+.codex
 __pycache__/
 .vscode/
 cache/
