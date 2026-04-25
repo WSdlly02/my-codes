@@ -4,9 +4,7 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
-import mimetypes
 import os
 import shutil
 import subprocess
@@ -14,89 +12,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
-DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-
-SYSTEM_PROMPT = """你是国际航运代理课程资料整理助手。你的目标是把课程讲义整理成开卷考试可快速检索的纸质资料。
-只依据给定图片和文字提炼，不编造。保留定义、分类、主体关系、业务流程、单证、条款、责任、计算规则、易混点和可能考题。
-删除口语寒暄、重复铺垫、无知识价值的转述。输出中文 Markdown。"""
-
-OCR_SYSTEM_PROMPT = """你是课程资料单页 OCR 与保守清洗助手。
-你的任务是忠实识别单页图片中的文字、表格和版面信息，形成可追溯的 Markdown 证据层。
-不要总结，不要扩写，不要补充课外知识。"""
-
-PAGE_OCR_PROMPT = """请对这一页课程资料做忠实 OCR 和保守清洗。
-
-页面信息：
-- 课程：{course}
-- 章节：{chapter}
-- atom：{atom_id} {title}
-- 来源角色：{source_role}
-- 来源文件：{source_file}
-- 渲染页码：p.{page_no}
-
-输出结构：
----
-source_role: {source_role}
-source_file: {source_file}
-page_no: {page_no}
----
-
-## OCR正文
-
-## 表格/流程/图示
-
-## 低置信度与疑似错字
-
-规则：
-- 尽量忠实保留原页文字、标题层级、列表、编号和表格。
-- 可以去除明显口头废话、页眉页脚、重复水印、无意义装饰。
-- 可以做保守纠错，例如明显的 OCR 错字、断行合并、标点修复；不确定必须保留原样并在“低置信度与疑似错字”中说明。
-- 图片、流程图、表格不能看清时，写“图像不清：...”，不要猜。
-- 不要在本阶段提炼考点，不要合并其他页面信息。"""
-
-SYNTHESIS_PROMPT = """下面是同一节课逐页 OCR 与保守清洗后的 Markdown。
-这些 page_md 只是 OCR 草稿和中间缓存，不是最终资料的一部分，最终讲义不能引用它们。
-请把这些草稿重建为一份可打印、自足、不可再下钻查询的 atom Markdown。
-
-最终结构必须为：
-# {atom_id} {title}
-
-## 0. 本讲速查索引
-| 查什么 | 直接答案 | 所在小节 |
-
-## 1. 本讲知识地图
-
-## 2. 核心概念与定义
-
-## 3. 主体关系与业务边界
-
-## 4. 业务范围、流程与操作规则
-
-## 5. 单证、条款、法律依据与责任
-
-## 6. 案例、异常情形与处置方法
-
-## 7. 易混淆点与辨析
-
-## 8. 高频考题与答题要点
-
-## 9. 关键词索引
-| 关键词 | 含义 | 关联考点 |
-
-## 与其他章节的关联
-
-约束：
-- 最终 Markdown 是本讲最小查询单元。读者打印后只看这份文件，应能回答本讲相关问题。
-- 不要引用 page_md、缓存路径、原始文件路径或“见某页 OCR”。page_md 只能作为重写材料，不能作为外部引用。
-- 可以保留来源页码作为括号内的弱提示，例如“据原文 p.5”，但页码不能替代正文内容。
-- 信息密度要高：定义、分类、主体、流程、单证、条款、责任、案例、易混点、考题都要展开到可直接作答。
-- 不是逐字稿。删除口头废话、重复铺垫、寒暄和明显无意义内容。
-- 不是短摘要。不要把关键案例、规则或定义压成一句话；必要处用表格、步骤、判断规则呈现。
-- 基于逐页 OCR 内容合并重复点，保留互相补充的细节。对导读、PPT、原文中重复的信息只保留最清晰版本。
-- 不要写学习建议，不要写泛泛总结。
-- 不确定内容必须标注“不确定”；对 OCR 疑似错字可保守纠正，并在正文中使用纠正后的术语。
-- 输出只包含最终 atom Markdown，不要解释你的处理过程。"""
+from llmcall import (
+    call_qwen_page_ocr,
+    call_qwen_synthesis_from_page_md,
+    create_qwen_client,
+)
 
 
 @dataclass
@@ -214,112 +134,12 @@ def render_source_file(
     return render_pdf_to_images(pdf, work_dir, role, source, dpi, max_pages_per_file)
 
 
-def image_data_uri(path: Path) -> str:
-    mime_type, _ = mimetypes.guess_type(path)
-    if not mime_type:
-        mime_type = "image/png"
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}"
-
-
-def create_client():
-    from dotenv import load_dotenv
-    from openai import OpenAI
-
-    load_dotenv()
-    api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY")
-    if not api_key:
-        raise RuntimeError("Set DASHSCOPE_API_KEY or QWEN_API_KEY before calling Qwen.")
-    return OpenAI(
-        api_key=api_key,
-        base_url=os.getenv("DASHSCOPE_BASE_URL", DEFAULT_BASE_URL),
-    )
-
-
-def response_text(response) -> str:
-    text = getattr(response, "output_text", None)
-    if text:
-        return text
-    parts: list[str] = []
-    for item in getattr(response, "output", []) or []:
-        if getattr(item, "type", None) != "message":
-            continue
-        for content in getattr(item, "content", []) or []:
-            if getattr(content, "type", None) == "output_text":
-                parts.append(content.text)
-    return "\n".join(parts).strip()
-
-
 def page_note_filename(page: RenderedPage, index: int) -> str:
     safe_stem = "".join(
         char if char.isalnum() or char in "-_" else "_"
         for char in page.source_path.stem
     )
     return f"page_{index:04d}_{page.source_role}_{safe_stem}_p{page.page_no:03d}.md"
-
-
-def call_qwen_page_ocr(
-    client, model: str, atom: dict, page: RenderedPage, raw_dir: Path, index: int
-) -> str:
-    content = [
-        {
-            "type": "input_text",
-            "text": PAGE_OCR_PROMPT.format(
-                course=atom["course"],
-                chapter=atom["chapter"],
-                atom_id=atom["atom_id"],
-                title=atom["title"],
-                source_role=page.source_role,
-                source_file=page.source_path.name,
-                page_no=page.page_no,
-            ),
-        },
-        {"type": "input_image", "image_url": image_data_uri(page.image_path)},
-    ]
-
-    response = client.responses.create(
-        model=model,
-        input=[
-            {"role": "system", "content": OCR_SYSTEM_PROMPT},
-            {"role": "user", "content": content},
-        ],
-        temperature=0,
-        reasoning={"effort": "low"},
-    )
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    (raw_dir / f"page_{index:04d}.json").write_text(
-        response.model_dump_json(indent=2, exclude_none=True),
-        encoding="utf-8",
-    )
-    return response_text(response)
-
-
-def call_qwen_synthesis(
-    client, model: str, atom: dict, page_notes: list[str], raw_dir: Path
-) -> str:
-    joined = "\n\n--- PAGE BREAK ---\n\n".join(page_notes)
-    response = client.responses.create(
-        model=model,
-        input=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": SYNTHESIS_PROMPT.format(
-                    atom_id=atom["atom_id"], title=atom["title"]
-                )
-                + "\n\n"
-                + joined,
-            },
-        ],
-        temperature=0.1,
-        reasoning={"effort": "medium"},
-    )
-    (raw_dir / "synthesis.json").write_text(
-        response.model_dump_json(indent=2, exclude_none=True),
-        encoding="utf-8",
-    )
-    return response_text(response)
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -401,7 +221,7 @@ def main() -> None:
         print(f"Rendered {len(rendered_pages)} pages into: {cache_dir / 'pages'}")
         return
 
-    client = create_client()
+    client = create_qwen_client()
     raw_dir = cache_dir / "qwen_raw_outputs"
     page_md_dir = cache_dir / "page_md"
     page_md_dir.mkdir(parents=True, exist_ok=True)
@@ -428,7 +248,7 @@ def main() -> None:
         return
 
     print(f"Calling Qwen synthesis with {args.synthesis_model}")
-    final_md = call_qwen_synthesis(
+    final_md = call_qwen_synthesis_from_page_md(
         client, args.synthesis_model, atom, page_notes, raw_dir
     )
     output_md.parent.mkdir(parents=True, exist_ok=True)
