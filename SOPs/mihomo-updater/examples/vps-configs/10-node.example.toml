@@ -1,0 +1,21 @@
+version = 1
+
+[[vps]]
+id = "jp-bytevirt"
+enabled = true
+name = "JP ByteVirt VPS"
+type = "vless"
+uuid = "00000000-0000-0000-0000-000000000000"
+server = "203.0.113.10"
+port = 8443
+flow = "xtls-rprx-vision"
+udp = true
+tls = true
+servername = "www.cloudflare.com"
+client_fingerprint = "chrome"
+groups = ["日本", "自动", "手动"]
+direct_rule = true
+
+[vps.reality-opts]
+public-key = "replace-with-public-key"
+short-id = "replace-with-short-id"

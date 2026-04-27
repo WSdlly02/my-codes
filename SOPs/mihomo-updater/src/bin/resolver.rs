@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, net::SocketAddr, process::Stdio, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -8,10 +8,12 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use mihomo_updater::{
+    models::{RealityOpts, RenderedProxy, ResolverConfig, VpsConfig},
+    yq::run_yq,
+};
 use reqwest::Client;
-use serde::Serialize;
 use serde_json::to_string;
-use tokio::{io::AsyncWriteExt, process::Command};
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -19,28 +21,6 @@ use url::Url;
 struct AppState {
     client: Client,
     config: Arc<ResolverConfig>,
-}
-
-#[derive(Clone, Debug)]
-struct ResolverConfig {
-    airport_url: String,
-    origin_config_path: String,
-    subconverter_host: String,
-    port: u16,
-    rules_url: String,
-    custom_proxies: Vec<VpsConfig>,
-    custom_rules: Vec<String>,
-    auto_group_map: HashMap<String, Vec<String>>,
-}
-
-#[derive(Clone, Debug)]
-struct VpsConfig {
-    name: String,
-    uuid: String,
-    ip: String,
-    port: u16,
-    public_key: String,
-    short_id: String,
 }
 
 #[derive(Debug)]
@@ -60,32 +40,6 @@ where
     fn from(value: E) -> Self {
         Self(value.into())
     }
-}
-
-#[derive(Serialize)]
-struct RenderedProxy<'a> {
-    name: &'a str,
-    #[serde(rename = "type")]
-    kind: &'static str,
-    uuid: &'a str,
-    server: &'a str,
-    port: u16,
-    flow: &'static str,
-    udp: bool,
-    tls: bool,
-    servername: &'static str,
-    #[serde(rename = "client-fingerprint")]
-    client_fingerprint: &'static str,
-    #[serde(rename = "reality-opts")]
-    reality_opts: RealityOpts<'a>,
-}
-
-#[derive(Serialize)]
-struct RealityOpts<'a> {
-    #[serde(rename = "public-key")]
-    public_key: &'a str,
-    #[serde(rename = "short-id")]
-    short_id: &'a str,
 }
 
 #[tokio::main]
@@ -285,15 +239,15 @@ fn render_proxies_json(proxies: &[VpsConfig]) -> Result<String> {
         .iter()
         .map(|proxy| RenderedProxy {
             name: &proxy.name,
-            kind: "vless",
+            kind: &proxy.kind,
             uuid: &proxy.uuid,
             server: &proxy.ip,
             port: proxy.port,
-            flow: "xtls-rprx-vision",
-            udp: true,
-            tls: true,
-            servername: "www.cloudflare.com",
-            client_fingerprint: "chrome",
+            flow: &proxy.flow,
+            udp: proxy.udp,
+            tls: proxy.tls,
+            servername: &proxy.servername,
+            client_fingerprint: &proxy.client_fingerprint,
             reality_opts: RealityOpts {
                 public_key: &proxy.public_key,
                 short_id: &proxy.short_id,
@@ -302,126 +256,4 @@ fn render_proxies_json(proxies: &[VpsConfig]) -> Result<String> {
         .collect();
 
     to_string(&rendered).context("failed to serialize custom proxies")
-}
-
-async fn run_yq(mode: &str, input: &[u8], expression: &str, args: &[&str]) -> Result<Vec<u8>> {
-    let mut command = Command::new("yq");
-    command.arg(mode).arg("-o=json").arg(expression).args(args);
-    command.stdin(Stdio::piped());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("failed to start yq {mode}"))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(input)
-            .await
-            .with_context(|| format!("failed to write stdin to yq {mode}"))?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .await
-        .with_context(|| format!("failed to wait for yq {mode}"))?;
-
-    if !output.status.success() {
-        bail!(
-            "yq {mode} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    Ok(output.stdout)
-}
-
-impl ResolverConfig {
-    fn load() -> Result<Self> {
-        let airport_url = load_env_required("AIRPORT_URL")?;
-        let origin_config_path = load_env_required("ORIGIN_CONFIG_PATH")?;
-        let subconverter_host = load_env_default("SUBCONVERTER_HOST", "http://127.0.0.1:25500");
-        let port = load_env_default("RESOLVER_PORT", "8088")
-            .parse::<u16>()
-            .context("failed to parse RESOLVER_PORT")?;
-        let rules_url = load_env_default(
-            "RULES_URL",
-            "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_Full.ini",
-        );
-
-        let jp_vps = VpsConfig {
-            name: "🇯🇵 日本 ByteVirt VPS".to_string(),
-            uuid: load_env_required("JP_BYTEVIRT_VPS_UUID")?,
-            ip: load_env_required("JP_BYTEVIRT_VPS_IP")?,
-            port: load_env_required("JP_BYTEVIRT_VPS_PORT")?
-                .parse::<u16>()
-                .context("failed to parse JP_BYTEVIRT_VPS_PORT")?,
-            public_key: load_env_required("JP_BYTEVIRT_VPS_PUBKEY")?,
-            short_id: load_env_required("JP_BYTEVIRT_VPS_SHORT_ID")?,
-        };
-
-        let nl_vps = VpsConfig {
-            name: "🇳🇱 荷兰 ExtraVM VPS".to_string(),
-            uuid: load_env_required("NL_EXTRAVM_VPS_UUID")?,
-            ip: load_env_required("NL_EXTRAVM_VPS_IP")?,
-            port: load_env_required("NL_EXTRAVM_VPS_PORT")?
-                .parse::<u16>()
-                .context("failed to parse NL_EXTRAVM_VPS_PORT")?,
-            public_key: load_env_required("NL_EXTRAVM_VPS_PUBKEY")?,
-            short_id: load_env_required("NL_EXTRAVM_VPS_SHORT_ID")?,
-        };
-
-        let custom_proxies: Vec<VpsConfig> = vec![jp_vps.clone(), nl_vps.clone()];
-        let mut custom_rules: Vec<String> = vec![
-            "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve".to_string(),
-            "DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string(),
-        ];
-        custom_rules.extend(
-            custom_proxies
-                .iter()
-                .map(|node| format!("IP-CIDR,{}/32,DIRECT,no-resolve", node.ip)),
-        );
-
-        let auto_group_map: HashMap<String, Vec<String>> = HashMap::from([
-            ("日本".to_string(), vec![jp_vps.name.clone()]),
-            ("荷兰".to_string(), vec![nl_vps.name.clone()]),
-            (
-                "自动".to_string(),
-                vec![jp_vps.name.clone(), nl_vps.name.clone()],
-            ),
-            (
-                "手动".to_string(),
-                vec![jp_vps.name.clone(), nl_vps.name.clone()],
-            ),
-        ]);
-
-        Ok(Self {
-            airport_url,
-            origin_config_path,
-            subconverter_host,
-            port,
-            rules_url,
-            custom_proxies,
-            custom_rules,
-            auto_group_map,
-        })
-    }
-}
-
-fn load_env_required(key: &str) -> Result<String> {
-    match env::var(key) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => bail!("配置错误: 必需的环境变量 {key} 未设置或为空"),
-    }
-}
-
-fn load_env_default(key: &str, default: &str) -> String {
-    match env::var(key) {
-        Ok(value) if !value.trim().is_empty() => value,
-        _ => {
-            warn!("环境变量 {key} 未设置或为空，使用默认值: {default}");
-            default.to_string()
-        }
-    }
 }
