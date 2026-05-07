@@ -3,7 +3,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::{Context, Result, bail};
 use axum::{
     Router,
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -13,6 +13,7 @@ use mihomo_updater::{
     yq::run_yq,
 };
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::to_string;
 use tracing::{error, info, warn};
 use url::Url;
@@ -21,6 +22,11 @@ use url::Url;
 struct AppState {
     client: Client,
     config: Arc<ResolverConfig>,
+}
+
+#[derive(Deserialize)]
+struct AccessQuery {
+    access_token: Option<String>,
 }
 
 #[derive(Debug)]
@@ -98,8 +104,12 @@ async fn health() -> &'static str {
 
 async fn handle_minimal(
     State(state): State<AppState>,
+    Query(query): Query<AccessQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    if !validate_access_token(&query, &state.config.access_token) {
+        return Ok((StatusCode::FORBIDDEN, "Forbidden").into_response());
+    }
     if !validate_user_agent(&headers) {
         return Ok((StatusCode::FORBIDDEN, "Forbidden").into_response());
     }
@@ -111,8 +121,12 @@ async fn handle_minimal(
 
 async fn handle_full(
     State(state): State<AppState>,
+    Query(query): Query<AccessQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    if !validate_access_token(&query, &state.config.access_token) {
+        return Ok((StatusCode::FORBIDDEN, "Forbidden").into_response());
+    }
     if !validate_user_agent(&headers) {
         return Ok((StatusCode::FORBIDDEN, "Forbidden").into_response());
     }
@@ -121,6 +135,15 @@ async fn handle_full(
     let generated = generate_config(&state).await?;
     let merged = merge_with_origin(&generated, &state.config.origin_config_path).await?;
     Ok(config_response(merged))
+}
+
+fn validate_access_token(query: &AccessQuery, expected: &str) -> bool {
+    if query.access_token.as_deref() == Some(expected) {
+        return true;
+    }
+
+    warn!("blocked request with missing or invalid access_token");
+    false
 }
 
 fn validate_user_agent(headers: &HeaderMap) -> bool {

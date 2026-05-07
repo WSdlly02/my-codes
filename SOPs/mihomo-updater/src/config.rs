@@ -14,6 +14,7 @@ impl ResolverConfig {
     pub fn load() -> Result<Self> {
         let airport_url = load_env_required("AIRPORT_URL")?;
         let origin_config_path = load_env_required("ORIGIN_CONFIG_PATH")?;
+        let access_token = load_env_required("ACCESS_TOKEN")?;
         let vps_configs_dir = PathBuf::from(load_env_required("VPS_CONFIGS_DIR")?);
         let subconverter_host = load_env_default("SUBCONVERTER_HOST", "http://127.0.0.1:25500");
         let port = load_env_default("RESOLVER_PORT", "8088")
@@ -41,6 +42,7 @@ impl ResolverConfig {
         Ok(Self {
             airport_url,
             origin_config_path,
+            access_token,
             subconverter_host,
             port,
             rules_url,

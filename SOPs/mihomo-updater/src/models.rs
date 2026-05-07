@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct ResolverConfig {
     pub airport_url: String,                          // 机场订阅链接
     pub origin_config_path: String,                   // 原始配置文件路径
+    pub access_token: String,                         // 配置端点访问令牌
     pub subconverter_host: String,                    // subconverter 服务地址
     pub port: u16,                                    // 监听端口
     pub rules_url: String,                            // 规则链接

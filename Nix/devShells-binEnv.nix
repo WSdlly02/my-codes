@@ -59,6 +59,7 @@ mkShell rec {
   packages =
     with pkgs;
     [
+      bashInteractive
       dbus
       glibcLocales
       glibc

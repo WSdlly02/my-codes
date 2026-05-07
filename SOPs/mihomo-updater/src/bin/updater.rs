@@ -1,10 +1,11 @@
-use std::{path::Path, time::Duration};
+use std::{env, path::Path, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use futures::future::join_all;
 use reqwest::Client;
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
 use tokio::{fs, process::Command};
+use url::Url;
 
 // ======== Configuration =======
 
@@ -44,10 +45,16 @@ struct DBSource {
     filename: &'static str,
 }
 
+struct Args {
+    access_token: String,
+}
+
 // ======== Core Logic ========
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = parse_args()?;
+
     println!(
         "=== Mihomo Updater: {} ===",
         now_string(format_description!(
@@ -65,8 +72,9 @@ async fn main() -> Result<()> {
         .context("failed to build http client")?;
 
     // 1. Fetch config from Resolver
+    let resolver_url_with_token = build_resolver_url_with_token(&args.access_token)?;
     println!("Fetching config from {RESOLVER_URL}...");
-    let remote_data = fetch_config(&client, RESOLVER_URL).await?;
+    let remote_data = fetch_config(&client, resolver_url_with_token.as_str()).await?;
     if remote_data.is_empty() {
         bail!("config is empty");
     }
@@ -99,6 +107,41 @@ async fn main() -> Result<()> {
 
     println!("=== Completed ===");
     Ok(())
+}
+
+fn parse_args() -> Result<Args> {
+    let mut args = env::args().skip(1);
+    let mut access_token = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--access-token" => {
+                let token = args
+                    .next()
+                    .context("--access-token requires a non-empty value")?;
+                if token.is_empty() {
+                    bail!("--access-token requires a non-empty value");
+                }
+                access_token = Some(token);
+            }
+            "--help" | "-h" => {
+                println!("Usage: mihomo-updater --access-token <token>");
+                std::process::exit(0);
+            }
+            _ => bail!("unknown argument: {arg}"),
+        }
+    }
+
+    Ok(Args {
+        access_token: access_token.context("missing required argument: --access-token <token>")?,
+    })
+}
+
+fn build_resolver_url_with_token(access_token: &str) -> Result<String> {
+    let mut url = Url::parse(RESOLVER_URL).context("invalid RESOLVER_URL")?;
+    url.query_pairs_mut()
+        .append_pair("access_token", access_token);
+    Ok(url.to_string())
 }
 
 async fn fetch_config(client: &Client, url: &str) -> Result<Vec<u8>> {
@@ -223,4 +266,33 @@ fn compact_timestamp() -> String {
     now_string(format_description!(
         "[year][month][day]-[hour][minute][second]"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolver_url_includes_access_token_query() {
+        let url = build_resolver_url_with_token("abc123").unwrap();
+        assert_eq!(url, "http://127.0.0.1:8088/config/full?access_token=abc123");
+    }
+
+    #[test]
+    fn resolver_url_percent_encodes_access_token() {
+        let url = build_resolver_url_with_token("a b+c").unwrap();
+        assert_eq!(
+            url,
+            "http://127.0.0.1:8088/config/full?access_token=a+b%2Bc"
+        );
+    }
+
+    #[test]
+    fn resolver_url_includes_uuid_access_token() {
+        let url = build_resolver_url_with_token("a88759a2-b1b3-4af5-b395-987d3f2f4e50").unwrap();
+        assert_eq!(
+            url,
+            "http://127.0.0.1:8088/config/full?access_token=a88759a2-b1b3-4af5-b395-987d3f2f4e50"
+        );
+    }
 }
