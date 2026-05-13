@@ -1,16 +1,11 @@
-mod calendar;
-mod config;
-mod model;
-mod schedule;
-
 use std::{fs, process::Command};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 
-use crate::calendar::generate_ics;
-use crate::config::Config;
-use crate::schedule::parse_class_schedule_html;
+use course_schedule_conversion::calendar::generate_ics;
+use course_schedule_conversion::config::Config;
+use course_schedule_conversion::schedule::parse_class_schedule_html;
 
 fn main() -> Result<()> {
     let config = Config::parse();

@@ -5,7 +5,7 @@ edition = "2024"
 
 [[bin]]
 name = "course-schedule-conversion"
-path = "src/main.rs"
+path = "src/bin/course-schedule-conversion.rs"
 
 [dependencies]
 anyhow = "1.0"
