@@ -1,0 +1,26 @@
+[package]
+name = "rest-cpu-burner"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "rest-cpu-burner"
+path = "src/bin/rest-cpu-burner.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+num_cpus = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+sysinfo = "0.38.4"
+
+[profile.release]
+opt-level = 3
+lto = "fat"       # 跨 crate 链接时全局优化，性能提升 10-30%
+codegen-units = 1 # 禁止并行编译，允许更激进的内联优化
+strip = true      # 去除符号表，减小体积
+panic = "abort"   # 减小体积并略微提升性能
