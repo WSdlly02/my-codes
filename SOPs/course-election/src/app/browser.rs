@@ -153,7 +153,7 @@ fn perform_automated_login(tab: &headless_chrome::Tab, opts: &LoginAutofillOptio
                 // and the user can still type the visible captcha and submit manually.
                 eprintln!("警告：验证码识别失败: {err}");
                 eprintln!("请手动填写验证码并提交登录表单");
-                return wait_for_manual_login_after_autofill();
+                return Ok(()); // early return, skip captcha autofill
             }
         };
         println!("验证码识别结果: {}", ocr.answer);
