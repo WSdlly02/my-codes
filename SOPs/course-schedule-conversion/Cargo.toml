@@ -15,5 +15,12 @@ clap = { version = "4.6", features = ["derive"] }
 icalendar = "0.17"
 once_cell = "1.21"
 regex = "1.12"
-scraper = "0.26"
+scraper = "0.27"
 uuid = { version = "1.23", features = ["v5"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"       # 跨 crate 链接时全局优化，性能提升 10-30%
+codegen-units = 1 # 禁止并行编译，允许更激进的内联优化
+strip = true      # 去除符号表，减小体积
+panic = "abort"   # 减小体积并略微提升性能
