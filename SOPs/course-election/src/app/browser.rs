@@ -1,16 +1,18 @@
-use anyhow::{Context, Result, anyhow, bail};
-use base64::Engine;
+use anyhow::{anyhow, bail, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use headless_chrome::{Browser, LaunchOptionsBuilder};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::app::cache::{load_saved_cookies, save_cookies};
 use crate::app::http::Session;
-use crate::app::support::{BASE_URL, DEFAULT_OCR_MODEL, DEFAULT_OLLAMA_URL, chrome_profile_path};
+use crate::app::support::{chrome_profile_path, BASE_URL, DEFAULT_OCR_MODEL, DEFAULT_OLLAMA_URL};
 use crate::model::SavedCookie;
+
+const LOGIN_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Default)]
 pub(crate) struct LoginAutofillOptions {
@@ -86,7 +88,7 @@ fn get_cookies_via_browser(opts: &LoginAutofillOptions) -> Result<Vec<SavedCooki
 }
 
 fn acquire_login_tab(browser: &Browser) -> Result<Arc<headless_chrome::Tab>> {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + LOGIN_WAIT_TIMEOUT;
     while Instant::now() < deadline {
         if let Some(tab) = browser.get_tabs().lock().unwrap().first().cloned() {
             return Ok(tab);
@@ -97,7 +99,7 @@ fn acquire_login_tab(browser: &Browser) -> Result<Arc<headless_chrome::Tab>> {
 }
 
 fn wait_for_cas_login_page(tab: &headless_chrome::Tab) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + LOGIN_WAIT_TIMEOUT;
     while Instant::now() < deadline {
         ensure_browser_alive(tab)?;
         let current_url = tab.get_url();
@@ -124,8 +126,9 @@ fn wait_for_cas_login_page(tab: &headless_chrome::Tab) -> Result<()> {
 }
 
 fn perform_automated_login(tab: &headless_chrome::Tab, opts: &LoginAutofillOptions) -> Result<()> {
-    let captcha_bytes = if opts.autofill_captcha {
-        Some(fetch_captcha_image(tab)?)
+    let ocr_handle = if opts.autofill_captcha {
+        let captcha_bytes = fetch_captcha_image(tab)?;
+        Some(thread::spawn(move || solve_math_captcha(&captcha_bytes)))
     } else {
         None
     };
@@ -140,13 +143,25 @@ fn perform_automated_login(tab: &headless_chrome::Tab, opts: &LoginAutofillOptio
         println!("已自动填充账号密码");
     }
 
-    if let Some(image) = captcha_bytes {
-        let ocr = solve_math_captcha(&image)?;
+    let mut captcha_filled = false;
+    if let Some(handle) = ocr_handle {
+        let ocr = handle.join().map_err(|_| anyhow!("验证码识别线程异常"))?;
+        let ocr = match ocr {
+            Ok(ocr) => ocr,
+            Err(err) => {
+                // OCR failure should not abort warmup: username/password are already filled,
+                // and the user can still type the visible captcha and submit manually.
+                eprintln!("警告：验证码识别失败: {err}");
+                eprintln!("请手动填写验证码并提交登录表单");
+                return wait_for_manual_login_after_autofill();
+            }
+        };
         println!("验证码识别结果: {}", ocr.answer);
         set_input_value(tab, "#validateCode", &ocr.answer).context("验证码填写失败")?;
+        captcha_filled = true;
     }
 
-    if opts.name.is_some() && opts.password.is_some() && opts.autofill_captcha {
+    if opts.name.is_some() && opts.password.is_some() && opts.autofill_captcha && captcha_filled {
         submit_login_form(tab).context("提交失败")?;
     } else {
         println!("已按参数完成自动填充，请手动补全剩余字段并提交");
@@ -155,7 +170,7 @@ fn perform_automated_login(tab: &headless_chrome::Tab, opts: &LoginAutofillOptio
 }
 
 fn wait_for_login_success(tab: &headless_chrome::Tab) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + LOGIN_WAIT_TIMEOUT;
     while Instant::now() < deadline {
         ensure_browser_alive(tab)?;
         let current_url = tab.get_url();

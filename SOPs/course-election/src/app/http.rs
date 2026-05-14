@@ -3,20 +3,20 @@ use chrono::DateTime;
 use chrono_tz::Asia::Shanghai;
 use reqwest::Method;
 use reqwest::StatusCode;
+use reqwest::Url;
 use reqwest::blocking::{Client, RequestBuilder, Response};
-use reqwest::cookie::Jar;
+use reqwest::cookie::{CookieStore, Jar};
 use reqwest::header::{
     ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HeaderMap, HeaderValue, LOCATION, ORIGIN, REFERER,
     USER_AGENT,
 };
-use reqwest::Url;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use crate::app::cache::{
-    load_channel_cache, load_count_snapshot, load_mapping_cache, save_channel_cache,
+    load_channel_cache, load_count_snapshot, load_mapping_cache, save_channel_cache, save_cookies,
     save_count_snapshot, save_mapping_cache,
 };
 use crate::app::parser::{
@@ -37,10 +37,86 @@ pub(crate) struct CourseData {
     pub(crate) counts_from_cache: bool,
 }
 
+struct PersistedCookieJar {
+    inner: Jar,
+    store: Mutex<HashMap<String, SavedCookie>>,
+}
+
+impl PersistedCookieJar {
+    fn new(cookies: &[SavedCookie], base_url: &Url) -> Self {
+        let inner = Jar::default();
+        let mut store = HashMap::new();
+        for cookie in cookies {
+            if let Some(cookie_str) = cookie_header_value(cookie) {
+                inner.add_cookie_str(&cookie_str, base_url);
+            }
+            store.insert(
+                cookie_key(&cookie.name, &cookie.domain, &cookie.path),
+                cookie.clone(),
+            );
+        }
+        Self {
+            inner,
+            store: Mutex::new(store),
+        }
+    }
+
+    fn add_cookie_str(&self, cookie: &str, url: &Url) {
+        self.inner.add_cookie_str(cookie, url);
+        if let Some(update) = parse_set_cookie(cookie) {
+            self.apply_cookie_update(update);
+        }
+    }
+
+    fn apply_cookie_update(&self, update: CookieUpdate) {
+        let mut store = self.store.lock().expect("cookie store poisoned");
+        match update {
+            CookieUpdate::Upsert(cookie) => {
+                store.insert(
+                    cookie_key(&cookie.name, &cookie.domain, &cookie.path),
+                    cookie,
+                );
+            }
+            CookieUpdate::Delete { name, domain, path } => {
+                store.remove(&cookie_key(&name, &domain, &path));
+            }
+        }
+        let cookies = store.values().cloned().collect::<Vec<_>>();
+        let _ = save_cookies(&cookies);
+    }
+}
+
+impl CookieStore for PersistedCookieJar {
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url) {
+        let headers = cookie_headers.cloned().collect::<Vec<_>>();
+        self.inner.set_cookies(&mut headers.iter(), url);
+        for header in headers {
+            if let Ok(value) = header.to_str() {
+                if let Some(update) = parse_set_cookie(value) {
+                    self.apply_cookie_update(update);
+                }
+            }
+        }
+    }
+
+    fn cookies(&self, url: &Url) -> Option<HeaderValue> {
+        self.inner.cookies(url)
+    }
+}
+
+enum CookieUpdate {
+    Upsert(SavedCookie),
+    Delete {
+        name: String,
+        domain: String,
+        path: String,
+    },
+}
+
 #[derive(Clone)]
 pub(crate) struct Session {
     client: Client,
-    jar: Arc<Jar>,
+    jar: Arc<PersistedCookieJar>,
     pub(crate) cookies: Vec<SavedCookie>,
 }
 
@@ -50,12 +126,7 @@ impl Session {
             bail!("未找到可用 Cookie");
         }
         let base_url = Url::parse(BASE_URL).context("解析 base URL 失败")?;
-        let jar = Arc::new(Jar::default());
-        for cookie in &cookies {
-            if let Some(cookie_str) = cookie_header_value(cookie) {
-                jar.add_cookie_str(&cookie_str, &base_url);
-            }
-        }
+        let jar = Arc::new(PersistedCookieJar::new(&cookies, &base_url));
         Ok(Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
@@ -133,12 +204,77 @@ impl Session {
             if let Ok(parsed_url) = Url::parse(url) {
                 for (name, value) in extra {
                     self.jar
-                        .add_cookie_str(&format!("{name}={value}"), &parsed_url);
+                        .add_cookie_str(&format!("{name}={value}; Path=/"), &parsed_url);
                 }
             }
         }
         self.client.request(method, url).headers(headers)
     }
+}
+
+fn parse_set_cookie(value: &str) -> Option<CookieUpdate> {
+    let mut parts = value.split(';').map(str::trim);
+    let first = parts.next()?;
+    let (name, cookie_value) = first.split_once('=')?;
+    if name.is_empty() {
+        return None;
+    }
+
+    let mut domain = String::new();
+    let mut path = String::new();
+    let mut expires = None;
+    let mut max_age = None;
+    let mut http_only = false;
+    let mut secure = false;
+
+    for part in parts {
+        if part.eq_ignore_ascii_case("httponly") {
+            http_only = true;
+            continue;
+        }
+        if part.eq_ignore_ascii_case("secure") {
+            secure = true;
+            continue;
+        }
+        let Some((attr, attr_value)) = part.split_once('=') else {
+            continue;
+        };
+        match attr.trim().to_ascii_lowercase().as_str() {
+            "domain" => domain = attr_value.trim().to_string(),
+            "path" => path = attr_value.trim().to_string(),
+            "expires" => {
+                if let Ok(parsed) = DateTime::parse_from_rfc2822(attr_value.trim()) {
+                    expires = Some(parsed);
+                }
+            }
+            "max-age" => max_age = attr_value.trim().parse::<i64>().ok(),
+            _ => {}
+        }
+    }
+
+    if max_age.is_some_and(|age| age <= 0)
+        || expires.as_ref().is_some_and(|time| *time <= now_fixed())
+    {
+        return Some(CookieUpdate::Delete {
+            name: name.to_string(),
+            domain,
+            path,
+        });
+    }
+
+    Some(CookieUpdate::Upsert(SavedCookie {
+        name: name.to_string(),
+        value: cookie_value.to_string(),
+        domain,
+        path,
+        expires,
+        http_only,
+        secure,
+    }))
+}
+
+fn cookie_key(name: &str, domain: &str, path: &str) -> String {
+    format!("{name}\0{domain}\0{path}")
 }
 
 fn cookie_header_value(cookie: &SavedCookie) -> Option<String> {

@@ -79,9 +79,10 @@ fn run_query(args: QueryArgs) -> Result<()> {
     let session_valid = session.as_ref().is_some_and(Session::is_session_valid);
 
     if args.class_schedule {
-        let session = session
-            .filter(Session::is_session_valid)
-            .ok_or_else(|| anyhow!("当前 Cookie 无效，无法查询 class-schedule，请先执行 warmup"))?;
+        if !session_valid {
+            bail!("当前 Cookie 无效，无法查询 class-schedule，请先执行 warmup");
+        }
+        let session = session.as_ref().expect("checked above");
         let html = query_class_schedule_html(&session)?;
         print!("{html}");
         return Ok(());
@@ -120,10 +121,10 @@ fn run_query(args: QueryArgs) -> Result<()> {
     )?;
 
     let selected_lesson_ids = if args.selected_lessons {
-        let session = session
-            .filter(Session::is_session_valid)
-            .ok_or_else(|| anyhow!("当前 Cookie 无效，无法查询已选课程，请先执行 warmup"))?;
-        fetch_elected_lesson_ids(&session, profile_id)?
+        if !session_valid {
+            bail!("当前 Cookie 无效，无法查询已选课程，请先执行 warmup");
+        }
+        fetch_elected_lesson_ids(session.as_ref().expect("checked above"), profile_id)?
     } else {
         HashMap::new()
     };
