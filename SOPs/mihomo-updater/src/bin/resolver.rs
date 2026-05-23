@@ -240,10 +240,10 @@ fn build_subconverter_url(config: &ResolverConfig) -> Result<String> {
         pairs.append_pair("insert", "true");
         pairs.append_pair("emoji", "true");
         pairs.append_pair("list", "false");
-        /// 原配置无此字段 
         // pairs.append_pair("tfo", "true");
-        /// skip_cert_verify 在原配置中为 true
+        // 原配置无此字段 
         pairs.append_pair("scv", "true");
+        // skip_cert_verify 在原配置中为 true
         pairs.append_pair("fdn", "true");
         pairs.append_pair("expand", "true");
         pairs.append_pair("sort", "false");
