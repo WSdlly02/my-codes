@@ -36,6 +36,7 @@ pub fn generate_ics(lessons: &[Lesson], config: &Config) -> Result<String> {
         )?;
     }
 
+    // 时间重叠是合法的选课结果。每项安排独立生成 VEVENT，不合并也不丢弃冲突课程。
     for lesson in lessons {
         if lesson.arrange_info.is_empty() {
             continue;
@@ -207,5 +208,53 @@ mod tests {
         assert!(ics.contains("SUMMARY:第1教学周"));
         assert!(ics.contains("SUMMARY:第2教学周"));
         assert!(ics.contains("LOCATION:一教101"));
+    }
+
+    #[test]
+    fn generate_calendar_preserves_conflicting_courses() {
+        let config = Config {
+            course_election_bin: "/tmp/unused".into(),
+            html_file: None,
+            semester_start: "2026-03-09".to_owned(),
+            timezone: "Asia/Shanghai".to_owned(),
+            alarm_minutes_before: 20,
+            teaching_week_count: 0,
+            no_teaching_week_reminders: true,
+            output: None,
+        };
+        let arrange = ArrangeInfo {
+            week_day: 3,
+            week_state: "01000000000000000000000000000000000000000000000000000".to_owned(),
+            start_unit: 7,
+            end_unit: 8,
+            rooms: "教学楼101".to_owned(),
+        };
+        let lessons = vec![
+            Lesson {
+                no: "AA100001_001".to_owned(),
+                name: "冲突课程A".to_owned(),
+                arrange_info: vec![arrange.clone()],
+                ..Lesson::default()
+            },
+            Lesson {
+                no: "BB100002_001".to_owned(),
+                name: "冲突课程B".to_owned(),
+                arrange_info: vec![arrange],
+                ..Lesson::default()
+            },
+        ];
+
+        let ics = generate_ics(&lessons, &config).unwrap();
+        assert_eq!(ics.matches("BEGIN:VEVENT").count(), 2);
+        assert!(ics.contains("SUMMARY:冲突课程A"));
+        assert!(ics.contains("SUMMARY:冲突课程B"));
+
+        let event_uids = ics
+            .lines()
+            .filter_map(|line| line.strip_prefix("UID:"))
+            .filter(|uid| uid.ends_with("@course-schedule-conversion"))
+            .collect::<Vec<_>>();
+        assert_eq!(event_uids.len(), 2);
+        assert_ne!(event_uids[0], event_uids[1]);
     }
 }
