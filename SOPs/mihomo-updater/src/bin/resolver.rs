@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -15,13 +19,23 @@ use mihomo_updater::{
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::to_string;
+use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use url::Url;
+
+const REMOTE_CONFIG_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60); // 7 days
 
 #[derive(Clone)]
 struct AppState {
     client: Client,
-    config: Arc<ResolverConfig>,
+    cached_remote_config: Arc<RwLock<Option<CachedRemoteConfig>>>,
+    resolver_config: Arc<ResolverConfig>,
+}
+
+#[derive(Clone)]
+struct CachedRemoteConfig {
+    data: Vec<u8>,
+    updated_at: Instant,
 }
 
 #[derive(Deserialize)]
@@ -58,7 +72,8 @@ async fn main() -> Result<()> {
 
     let state = AppState {
         client,
-        config: Arc::new(config),
+        cached_remote_config: Arc::new(RwLock::new(None)),
+        resolver_config: Arc::new(config),
     };
 
     let app = Router::new()
@@ -67,7 +82,7 @@ async fn main() -> Result<()> {
         .route("/config/full", get(handle_full))
         .with_state(state.clone());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], state.config.port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], state.resolver_config.port));
     info!("server listening on {addr}");
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -107,7 +122,7 @@ async fn handle_minimal(
     Query(query): Query<AccessQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    if !validate_access_token(&query, &state.config.access_token) {
+    if !validate_access_token(&query, &state.resolver_config.access_token) {
         return Ok((StatusCode::FORBIDDEN, "Forbidden").into_response());
     }
     if !validate_user_agent(&headers) {
@@ -124,7 +139,7 @@ async fn handle_full(
     Query(query): Query<AccessQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    if !validate_access_token(&query, &state.config.access_token) {
+    if !validate_access_token(&query, &state.resolver_config.access_token) {
         return Ok((StatusCode::FORBIDDEN, "Forbidden").into_response());
     }
     if !validate_user_agent(&headers) {
@@ -133,7 +148,7 @@ async fn handle_full(
     info!("handling full config request");
 
     let generated = generate_config(&state).await?;
-    let merged = merge_with_origin(&generated, &state.config.origin_config_path).await?;
+    let merged = merge_with_origin(&generated, &state.resolver_config.origin_config_path).await?;
     Ok(config_response(merged))
 }
 
@@ -175,17 +190,11 @@ fn config_response(body: Vec<u8>) -> Response {
 }
 
 async fn generate_config(state: &AppState) -> Result<Vec<u8>> {
-    let url = build_subconverter_url(&state.config)?;
-    info!("fetching from subconverter: {url}");
+    let bytes = fetch_remote_config_with_fallback(state).await?;
 
-    let bytes = fetch_url(&state.client, &url).await?;
-    if bytes.len() < 100 {
-        bail!("response too short");
-    }
-
-    let custom_proxies_json = render_proxies_json(&state.config.custom_proxies)?;
-    let custom_rules_json =
-        to_string(&state.config.custom_rules).context("failed to serialize custom rules")?;
+    let custom_proxies_json = render_proxies_json(&state.resolver_config.custom_proxies)?;
+    let custom_rules_json = to_string(&state.resolver_config.custom_rules)
+        .context("failed to serialize custom rules")?;
 
     let mut filter_parts = vec![
         format!(
@@ -194,7 +203,7 @@ async fn generate_config(state: &AppState) -> Result<Vec<u8>> {
         format!(r#".rules = {custom_rules_json} + .rules"#),
     ];
 
-    for (keyword, nodes) in &state.config.auto_group_map {
+    for (keyword, nodes) in &state.resolver_config.auto_group_map {
         let nodes_json = to_string(nodes).context("failed to serialize group nodes")?;
         filter_parts.push(format!(
             r#".["proxy-groups"][] |= (select(.name | test("{keyword}")) | .proxies = {nodes_json} + (.proxies - {nodes_json}))"#
@@ -203,6 +212,50 @@ async fn generate_config(state: &AppState) -> Result<Vec<u8>> {
 
     let filter = filter_parts.join(" | ");
     run_yq("eval", &bytes, &filter, &["-"]).await
+}
+
+async fn fetch_remote_config_with_fallback(state: &AppState) -> Result<Vec<u8>> {
+    let url = build_subconverter_url(&state.resolver_config)?;
+    info!("fetching from subconverter: {url}");
+
+    match fetch_and_validate_remote_config(&state.client, &url).await {
+        Ok(bytes) => {
+            *state.cached_remote_config.write().await = Some(CachedRemoteConfig {
+                data: bytes.clone(),
+                updated_at: Instant::now(),
+            });
+            info!("updated remote config cache from subconverter");
+            Ok(bytes)
+        }
+        Err(err) => {
+            if let Some(cached) = get_usable_cached_remote_config(state).await {
+                warn!("failed to fetch subconverter config, using cached remote config: {err:#}");
+                Ok(cached)
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+async fn fetch_and_validate_remote_config(client: &Client, target: &str) -> Result<Vec<u8>> {
+    let bytes = fetch_url(client, target).await?;
+    if bytes.len() < 100 {
+        bail!("response too short");
+    }
+    Ok(bytes)
+}
+
+async fn get_usable_cached_remote_config(state: &AppState) -> Option<Vec<u8>> {
+    let cached = state.cached_remote_config.read().await;
+    let cached = cached.as_ref()?;
+
+    if cached.updated_at.elapsed() <= REMOTE_CONFIG_CACHE_TTL {
+        Some(cached.data.clone())
+    } else {
+        warn!("cached remote config is older than 7 days; refusing fallback");
+        None
+    }
 }
 
 async fn fetch_url(client: &Client, target: &str) -> Result<Vec<u8>> {
@@ -241,7 +294,7 @@ fn build_subconverter_url(config: &ResolverConfig) -> Result<String> {
         pairs.append_pair("emoji", "true");
         pairs.append_pair("list", "false");
         // pairs.append_pair("tfo", "true");
-        // 原配置无此字段 
+        // 原配置无此字段
         pairs.append_pair("scv", "true");
         // skip_cert_verify 在原配置中为 true
         pairs.append_pair("fdn", "true");
