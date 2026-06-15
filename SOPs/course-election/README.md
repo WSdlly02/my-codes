@@ -168,6 +168,20 @@ cargo build --release
 
 该命令会请求课表入口页，提取唯一学号，再请求课表 HTML 并直接打印。它需要当前 Cookie 有效。
 
+课表查询会自动按当前日期推导 `semester.id`。已知规则为：2025 学年秋季学期为 `395`，同一学年春季学期为秋季 `+1`，下一个同季学期为 `+20`。例如 2026-02-01 至 2026-08-31 推导为 `396`，2026-09-01 至 2027-01-31 推导为 `415`。
+
+也可以手动指定：
+
+```bash
+./course-election query --class-schedule --semester-id 415
+```
+
+或使用环境变量：
+
+```bash
+COURSE_ELECTION_SEMESTER_ID=415 ./course-election query --class-schedule
+```
+
 ### 7. 选课
 
 按课程 ID 选课：
@@ -266,6 +280,7 @@ cargo build --release
 
 # 查询课表 HTML
 ./course-election query --class-schedule
+./course-election query --class-schedule --semester-id 415
 
 # 选课
 ./course-election select --profile 2936 --lesson-id 242153 --retry 0 --interval 500ms

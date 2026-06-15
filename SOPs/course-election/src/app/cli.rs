@@ -34,6 +34,8 @@ pub(crate) struct QueryArgs {
     pub(crate) selected_lessons: bool,
     #[arg(long = "class-schedule")]
     pub(crate) class_schedule: bool,
+    #[arg(long = "semester-id")]
+    pub(crate) semester_id: Option<String>,
 }
 
 #[derive(Args)]

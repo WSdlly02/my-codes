@@ -1,15 +1,15 @@
-use anyhow::{anyhow, bail, Context, Result};
-use base64::engine::general_purpose::STANDARD as BASE64;
+use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use headless_chrome::{Browser, LaunchOptionsBuilder};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::app::cache::{load_saved_cookies, save_cookies};
 use crate::app::http::Session;
-use crate::app::support::{chrome_profile_path, BASE_URL, DEFAULT_OCR_MODEL, DEFAULT_OLLAMA_URL};
+use crate::app::support::{BASE_URL, DEFAULT_OCR_MODEL, DEFAULT_OLLAMA_URL, chrome_profile_path};
 use crate::model::SavedCookie;
 
 const LOGIN_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -44,11 +44,13 @@ pub(crate) fn ensure_login_with_options(opts: LoginAutofillOptions) -> Result<(S
 }
 
 fn get_cookies_via_browser(opts: &LoginAutofillOptions) -> Result<Vec<SavedCookie>> {
+    let profile_path = chrome_profile_path()?;
+    println!("Chrome profile: {}", profile_path.display());
     let launch_options = LaunchOptionsBuilder::default()
         .headless(false)
         .sandbox(false)
         .idle_browser_timeout(Duration::from_secs(300))
-        .user_data_dir(Some(chrome_profile_path()))
+        .user_data_dir(Some(profile_path))
         .build()
         .map_err(|err| anyhow!(err))?;
     let browser = Browser::new(launch_options).context("启动 Chrome 失败")?;

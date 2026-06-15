@@ -19,7 +19,7 @@ use crate::app::output::{
 use crate::app::parser::{
     resolve_lesson_id_by_name, selection_succeeded, summarize_selection_response,
 };
-use crate::app::support::{channels_cache_path, format_time};
+use crate::app::support::{channels_cache_path, format_time, resolve_semester_id};
 
 pub(crate) fn run() -> Result<()> {
     let cli = Cli::parse();
@@ -83,7 +83,8 @@ fn run_query(args: QueryArgs) -> Result<()> {
             bail!("当前 Cookie 无效，无法查询 class-schedule，请先执行 warmup");
         }
         let session = session.as_ref().expect("checked above");
-        let html = query_class_schedule_html(&session)?;
+        let semester_id = resolve_semester_id(args.semester_id.as_deref())?;
+        let html = query_class_schedule_html(&session, &semester_id)?;
         print!("{html}");
         return Ok(());
     }

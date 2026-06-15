@@ -24,8 +24,7 @@ use crate::app::parser::{
     parse_elected_ids, parse_lesson_payload, parse_unique_std_id,
 };
 use crate::app::support::{
-    BASE_URL, DEFAULT_TIMEOUT_SECS, RETRY_ATTEMPTS, SEMESTER_ID, now_fixed, should_retry_status,
-    urlencoding,
+    BASE_URL, DEFAULT_TIMEOUT_SECS, RETRY_ATTEMPTS, now_fixed, should_retry_status, urlencoding,
 };
 use crate::model::{
     ChannelCache, ChannelEntry, LessonCount, LessonCountSnapshot, LessonMappingCache, SavedCookie,
@@ -421,10 +420,10 @@ pub(crate) fn drop_lesson(session: &Session, profile_id: &str, lesson_id: &str) 
     batch_operate(session, profile_id, lesson_id, "undefined", false)
 }
 
-pub(crate) fn query_class_schedule_html(session: &Session) -> Result<String> {
-    let entry_html = fetch_class_schedule_entry_html(session)?;
+pub(crate) fn query_class_schedule_html(session: &Session, semester_id: &str) -> Result<String> {
+    let entry_html = fetch_class_schedule_entry_html(session, semester_id)?;
     let std_id = parse_unique_std_id(&entry_html)?;
-    fetch_class_schedule_table_html(session, &std_id)
+    fetch_class_schedule_table_html(session, semester_id, &std_id)
 }
 
 fn refresh_or_load_lesson_counts(
@@ -529,7 +528,7 @@ fn batch_operate(
     response.text().context("读取选课响应失败")
 }
 
-fn fetch_class_schedule_entry_html(session: &Session) -> Result<String> {
+fn fetch_class_schedule_entry_html(session: &Session, semester_id: &str) -> Result<String> {
     let mut headers = HeaderMap::new();
     headers.insert(ACCEPT, HeaderValue::from_static("text/html, */*; q=0.01"));
     headers.insert(
@@ -566,7 +565,7 @@ fn fetch_class_schedule_entry_html(session: &Session) -> Result<String> {
     let response = session.get_with_retry(
         &format!("{BASE_URL}/courseTableForStd.action"),
         headers,
-        Some(&[("semester.id", SEMESTER_ID)]),
+        Some(&[("semester.id", semester_id)]),
     )?;
     if response.status().as_u16() == 302 {
         bail!("courseTableForStd 被重定向，登录态可能已失效");
@@ -574,7 +573,11 @@ fn fetch_class_schedule_entry_html(session: &Session) -> Result<String> {
     response.text().context("读取课表入口页失败")
 }
 
-fn fetch_class_schedule_table_html(session: &Session, std_id: &str) -> Result<String> {
+fn fetch_class_schedule_table_html(
+    session: &Session,
+    semester_id: &str,
+    std_id: &str,
+) -> Result<String> {
     let mut headers = HeaderMap::new();
     headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
     headers.insert(
@@ -616,7 +619,7 @@ fn fetch_class_schedule_table_html(session: &Session, std_id: &str) -> Result<St
     headers.insert("sec-ch-ua-platform", HeaderValue::from_static("\"Linux\""));
     let body = format!(
         "ignoreHead=1&setting.kind=std&startWeek=1&semester.id={}&ids={}",
-        SEMESTER_ID,
+        urlencoding(semester_id),
         urlencoding(std_id)
     );
     let response = session
@@ -624,7 +627,7 @@ fn fetch_class_schedule_table_html(session: &Session, std_id: &str) -> Result<St
             Method::POST,
             &format!("{BASE_URL}/courseTableForStd!courseTable.action"),
             headers,
-            Some(&[("semester.id", SEMESTER_ID)]),
+            Some(&[("semester.id", semester_id)]),
         )
         .body(body)
         .send()
