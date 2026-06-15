@@ -11,7 +11,7 @@ use crate::app::cache::{
 use crate::app::cli::{ActionArgs, Cli, Commands, FlushStateArgs, QueryArgs, WarmupArgs};
 use crate::app::http::{
     Session, drop_lesson, fetch_and_cache_channels, fetch_elected_lesson_ids,
-    load_or_fetch_channels, query_class_schedule_html, query_course_data, select_lesson,
+    query_class_schedule_html, query_course_data, select_lesson,
 };
 use crate::app::output::{
     LessonQueryFilter, build_lesson_display_entries, format_lesson_display_entry,
@@ -93,7 +93,17 @@ fn run_query(args: QueryArgs) -> Result<()> {
             bail!("--selected-lessons 必须配合 --profile 使用");
         }
         let channels = if session_valid {
-            load_or_fetch_channels(session.as_ref().expect("checked above"))?
+            match fetch_and_cache_channels(session.as_ref().expect("checked above")) {
+                Ok(channels) => channels,
+                Err(err) => {
+                    eprintln!("警告：通道在线刷新失败，尝试使用本地缓存: {err}");
+                    load_channel_cache()
+                        .map(|cache| cache.channels)
+                        .map_err(|_| {
+                            anyhow!("通道在线刷新失败，且本地没有通道缓存，请先执行 warmup")
+                        })?
+                }
+            }
         } else {
             load_channel_cache()
                 .map(|cache| cache.channels)
@@ -115,10 +125,12 @@ fn run_query(args: QueryArgs) -> Result<()> {
         return Ok(());
     };
 
-    let data = query_course_data(
-        session_valid.then_some(session.as_ref().expect("checked above")),
-        profile_id,
-    )?;
+    let online_session = if session_valid {
+        session.as_ref()
+    } else {
+        None
+    };
+    let data = query_course_data(online_session, profile_id)?;
 
     let selected_lesson_ids = if args.selected_lessons {
         if !session_valid {

@@ -16,8 +16,8 @@ use std::thread;
 use std::time::Duration;
 
 use crate::app::cache::{
-    load_channel_cache, load_count_snapshot, load_mapping_cache, save_channel_cache, save_cookies,
-    save_count_snapshot, save_mapping_cache,
+    load_count_snapshot, load_mapping_cache, save_channel_cache, save_cookies, save_count_snapshot,
+    save_mapping_cache,
 };
 use crate::app::parser::{
     build_lesson_count_snapshot, build_lesson_mapping_cache, parse_channels, parse_count_payload,
@@ -303,13 +303,6 @@ fn cookie_header_value(cookie: &SavedCookie) -> Option<String> {
         ));
     }
     Some(parts.join("; "))
-}
-
-pub(crate) fn load_or_fetch_channels(session: &Session) -> Result<Vec<ChannelEntry>> {
-    match load_channel_cache() {
-        Ok(cache) if !cache.channels.is_empty() => Ok(cache.channels),
-        _ => fetch_and_cache_channels(session),
-    }
 }
 
 pub(crate) fn fetch_and_cache_channels(session: &Session) -> Result<Vec<ChannelEntry>> {
