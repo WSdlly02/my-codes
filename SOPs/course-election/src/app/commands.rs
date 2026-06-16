@@ -213,8 +213,11 @@ fn run_action(args: ActionArgs, select_mode: bool) -> Result<()> {
     }
 
     let session = load_session_from_saved_login()?;
-    if !session.is_session_valid() {
+    if !args.skip_session_check && !session.is_session_valid() {
         bail!("当前 Cookie 无效，请先执行 warmup");
+    }
+    if args.skip_session_check {
+        eprintln!("警告：已跳过 Cookie 有效性预检，将直接发送选课/退课请求");
     }
 
     let resolved_lesson_id = if let Some(lesson_id) = args.lesson_id.clone() {

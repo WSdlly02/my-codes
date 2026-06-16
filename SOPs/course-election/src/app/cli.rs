@@ -66,4 +66,6 @@ pub(crate) struct ActionArgs {
     pub(crate) retry: usize,
     #[arg(long, default_value = "500ms", value_parser = parse_duration_arg)]
     pub(crate) interval: Duration,
+    #[arg(long = "skip-session-check")]
+    pub(crate) skip_session_check: bool,
 }

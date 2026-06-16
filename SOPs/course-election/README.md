@@ -212,6 +212,14 @@ COURSE_ELECTION_SEMESTER_ID=415 ./course-election query --class-schedule
 
 `--interval` 只支持 `ms` 或 `s`，例如 `500ms`、`1s`。
 
+如果服务器响应很慢导致 Cookie 有效性预检误判，可以紧急跳过预检：
+
+```bash
+./course-election select --profile 2936 --lesson-id 242153 --skip-session-check
+```
+
+该参数只跳过发送选课/退课请求前的预检。真实请求仍可能被服务器拒绝，程序会继续打印服务端响应摘要或请求错误。
+
 选课实现流程：
 
 1. 请求 `defaultPage`。
@@ -284,6 +292,7 @@ COURSE_ELECTION_SEMESTER_ID=415 ./course-election query --class-schedule
 
 # 选课
 ./course-election select --profile 2936 --lesson-id 242153 --retry 0 --interval 500ms
+./course-election select --profile 2936 --lesson-id 242153 --skip-session-check
 
 # 退课
 ./course-election drop --profile 2936 --lesson-id 242153
