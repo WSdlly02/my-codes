@@ -34,6 +34,18 @@ PDF -> PaddleOCR -> merged.md + pages/ + images/
 
 ## 当前程序
 
+PDF 归一化脚本：
+
+```text
+scripts-v2/normalize_to_pdf.py
+```
+
+OCR manifest 生成脚本：
+
+```text
+scripts-v2/build_pdf_manifest.py
+```
+
 Rust 入口：
 
 ```text
@@ -102,6 +114,95 @@ PP_API_KEY
 - `error.log` 只记录最近一次失败原因。
 - `libreoffice_profiles/` 是归一化阶段临时目录，默认会在归一化结束后删除。
 
+## 脚本说明
+
+### normalize_to_pdf.py
+
+职责：
+
+- 扫描 `<课程名>/` 下所有支持的原始文件。
+- 默认跳过 `整理与索引版本/`，避免把过程缓存和最终产物再次扫入。
+- 将 `.pdf` 复制到 `99_过程缓存/pdf_normalized/`。
+- 将 `.doc/.docx/.ppt/.pptx` 通过 LibreOffice 转换为 PDF，再放入 `pdf_normalized/`。
+- 写出 `99_过程缓存/normalized_files.jsonl`。
+- 默认在结束后删除 `libreoffice_profiles/` 临时目录。
+
+基本用法：
+
+```bash
+python scripts-v2/normalize_to_pdf.py <课程名>
+```
+
+常用参数：
+
+```text
+--dry-run             只预览扫描结果，不写文件
+--overwrite           已存在 PDF 时重新生成
+--libreoffice PATH    指定 LibreOffice 可执行文件
+--timeout SECONDS     单个 Office 文件转换超时时间，默认 180
+--keep-profile-dir    保留 LibreOffice profile 目录，便于排查转换问题
+--include-hidden      包含隐藏文件和目录
+```
+
+输出示例：
+
+```text
+<课程名>/整理与索引版本/99_过程缓存/
+├── normalized_files.jsonl
+└── pdf_normalized/
+    ├── P000001-631b9e49cc.pdf
+    └── ...
+```
+
+`normalized_files.jsonl` 每行记录一个原始文件的归一化结果：
+
+```json
+{"source_path":"unit5(2).docx","source_suffix":".docx","pdf_id":"P000015-5c6e39764a","pdf_name":"unit5(2)","pdf_path":".../pdf_normalized/P000015-5c6e39764a.pdf","action":"convert","status":"ok","error":null}
+```
+
+字段说明：
+
+```text
+source_path    原始文件相对课程目录的路径
+source_suffix  原始文件后缀
+pdf_id         归一化 PDF 的稳定 ID
+pdf_name       人类可读标题，默认取原始文件 stem
+pdf_path       归一化后的 PDF 路径
+action         copy / convert / skip / error
+status         ok / failed
+error          失败原因；成功时为 null
+```
+
+### build_pdf_manifest.py
+
+职责：
+
+- 读取 `normalized_files.jsonl`。
+- 只保留 `status == "ok"` 且 PDF 文件存在的记录。
+- 生成 `99_过程缓存/manifest.jsonl`，作为 Rust OCR 程序的输入。
+
+基本用法：
+
+```bash
+python scripts-v2/build_pdf_manifest.py <课程名>
+```
+
+常用参数：
+
+```text
+--normalized PATH     指定 normalized_files.jsonl 路径
+--output PATH         指定 manifest.jsonl 输出路径
+--include-failed      将失败记录也写入输出，仅用于排查，不用于 OCR
+```
+
+输出格式：
+
+```json
+{"id":"P000015-5c6e39764a","pdf_name":"unit5(2)","pdf_path":".../pdf_normalized/P000015-5c6e39764a.pdf"}
+```
+
+`manifest.jsonl` 是派生执行队列，不承载课程语义。需要分批 OCR 时，可以复制或编辑这份文件作为临时 manifest。
+
 ## Manifest 格式
 
 每行一个 JSON object，字段固定为：
@@ -130,11 +231,26 @@ P000002-<hash>
 
 ## 使用流程
 
-### 1. 预处理为 PDF
+### 1. 归一化为 PDF
 
-如果原始资料是 DOCX、PPTX 或其他格式，先统一转换为 PDF。
+运行：
 
-v2 OCR 阶段默认输入已经是 PDF，不负责办公文档转换。
+```bash
+python scripts-v2/normalize_to_pdf.py <课程名>
+```
+
+如果要强制重建已经存在的归一化 PDF：
+
+```bash
+python scripts-v2/normalize_to_pdf.py <课程名> --overwrite
+```
+
+该步骤会扫描课程目录中的 `.pdf/.doc/.docx/.ppt/.pptx`，并生成：
+
+```text
+<课程名>/整理与索引版本/99_过程缓存/pdf_normalized/
+<课程名>/整理与索引版本/99_过程缓存/normalized_files.jsonl
+```
 
 ### 2. 构造 manifest.jsonl
 
@@ -261,37 +377,7 @@ ocr_provider: PaddleOCR-VL-1.6
 
 本阶段产出的是 OCR 缓存，不是最终讲义。
 
-后续建议拆成独立阶段：
-
-```text
-PDF OCR cache
-  -> atom synthesis manifest
-  -> atom markdown
-  -> chapter indexes
-  -> topic indexes
-  -> master indexes
-  -> print bundle
-```
-
-其中 atom synthesis manifest 可以引用多个 PDF OCR 结果：
-
-```json
-{"atom_id":"L001","title":"航运代理基本概念_第一讲","pdf_ids":["P000001-98fc1640","P000002-a31d90ef","P000003-b702e91a"]}
-```
-
-这一步才引入课程语义，例如章节、课型、资料来源、推荐视频、课件等。
-
 ## 当前边界
-
-本阶段不做：
-
-- DOCX/PPTX 到 PDF 的转换
-- PDF 分组为 atom
-- 章节识别
-- 课程专用排序
-- 术语抽取
-- LLM 总结
-- 打印版排版
 
 本阶段只做：
 
