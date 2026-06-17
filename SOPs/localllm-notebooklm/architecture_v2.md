@@ -66,10 +66,15 @@ PP_API_KEY
 
 ```text
 <课程名>/
-├── manifest.jsonl
 ├── 原始资料...
 └── 整理与索引版本/
     └── 99_过程缓存/
+        ├── normalized_files.jsonl
+        ├── manifest.jsonl
+        ├── pdf_normalized/
+        │   ├── P000001-xxxxxxxxxx.pdf
+        │   ├── P000002-xxxxxxxxxx.pdf
+        │   └── ...
         └── <pdf_id>/
             ├── merged.md
             ├── result.jsonl
@@ -78,19 +83,24 @@ PP_API_KEY
             │   ├── page_0002.md
             │   └── ...
             ├── images/
-            │   └── ...
+            │   ├── markdown/
+            │   └── output/
             └── error.log
 ```
 
 说明：
 
-- `manifest.jsonl` 放在课程根目录。
+- `normalized_files.jsonl` 是归一化审计清单，记录原始文件到归一化 PDF 的映射。
+- `manifest.jsonl` 是 OCR 阶段输入清单，由 `normalized_files.jsonl` 派生生成。
+- `pdf_normalized/` 保存所有归一化后的 PDF。
 - `99_过程缓存/<pdf_id>/` 是每个 PDF 的 OCR 缓存目录。
 - `merged.md` 是后续 LLM 综合阶段最应该读取的文件。
 - `pages/` 是逐页缓存，方便人工排查 OCR 错误。
-- `images/` 保存 PaddleOCR 从 Markdown 或 layout result 中提取出的图片。
+- `images/markdown/` 保存 PaddleOCR Markdown 正文内联引用的图片；`merged.md` 和 `pages/page_xxxx.md` 中的图片路径会被改写到这里。
+- `images/output/` 保存 PaddleOCR 的版面检测等调试图。
 - `result.jsonl` 保存 PaddleOCR 原始结果，便于以后重新解析。
 - `error.log` 只记录最近一次失败原因。
+- `libreoffice_profiles/` 是归一化阶段临时目录，默认会在归一化结束后删除。
 
 ## Manifest 格式
 
@@ -128,10 +138,16 @@ v2 OCR 阶段默认输入已经是 PDF，不负责办公文档转换。
 
 ### 2. 构造 manifest.jsonl
 
-在课程根目录创建：
+从归一化清单生成 OCR manifest：
+
+```bash
+python scripts-v2/build_pdf_manifest.py <课程名>
+```
+
+输出位置：
 
 ```text
-<课程名>/manifest.jsonl
+<课程名>/整理与索引版本/99_过程缓存/manifest.jsonl
 ```
 
 每个 PDF 一行：
@@ -140,6 +156,8 @@ v2 OCR 阶段默认输入已经是 PDF，不负责办公文档转换。
 {"id":"P000001-98fc1640","pdf_name":"文件名A","pdf_path":"<课程名>/资料/文件名A.pdf"}
 {"id":"P000002-a31d90ef","pdf_name":"文件名B","pdf_path":"<课程名>/资料/文件名B.pdf"}
 ```
+
+`manifest.jsonl` 不承载额外业务信息，可以随时由 `normalized_files.jsonl` 重新生成。
 
 ### 3. 设置 PaddleOCR API key
 
@@ -159,7 +177,7 @@ PP_API_KEY=...
 
 ```bash
 cargo run --bin batch-paddle-ocr -- \
-  --manifest <课程名>/manifest.jsonl \
+  --manifest <课程名>/整理与索引版本/99_过程缓存/manifest.jsonl \
   --cache-dir <课程名>/整理与索引版本/99_过程缓存 \
   --concurrency 4 \
   --poll-interval 5 \
@@ -285,4 +303,3 @@ PDF OCR cache
 - 下载 OCR 结果中的图片
 - 合并为 `merged.md`
 - 提供可断点续跑的文件系统缓存
-

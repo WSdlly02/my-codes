@@ -357,10 +357,13 @@ async fn write_pages_and_images(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .trim();
+            let markdown_images = download_markdown_images(client, tmp_dir, res).await?;
+            let page_text = rewrite_markdown_image_paths(text, &markdown_images, "../");
+            let merged_text = rewrite_markdown_image_paths(text, &markdown_images, "");
 
             let page_md = format!(
                 "---\nid: {}\npdf_name: {}\npage_no: {}\n---\n\n{}\n",
-                row.id, row.pdf_name, page_no, text
+                row.id, row.pdf_name, page_no, page_text
             );
             fs::write(
                 tmp_dir.join("pages").join(format!("page_{page_no:04}.md")),
@@ -369,10 +372,9 @@ async fn write_pages_and_images(
             .await?;
 
             merged.push_str(&format!("<!-- PAGE {page_no:04} -->\n\n"));
-            merged.push_str(text);
+            merged.push_str(&merged_text);
             merged.push_str("\n\n");
 
-            download_markdown_images(client, tmp_dir, res).await?;
             download_output_images(client, tmp_dir, res, page_no).await?;
             page_no += 1;
         }
@@ -385,22 +387,45 @@ async fn write_pages_and_images(
     Ok(merged)
 }
 
-async fn download_markdown_images(client: &Client, tmp_dir: &Path, res: &Value) -> Result<()> {
+async fn download_markdown_images(
+    client: &Client,
+    tmp_dir: &Path,
+    res: &Value,
+) -> Result<Vec<(String, String)>> {
     let Some(images) = res.pointer("/markdown/images").and_then(Value::as_object) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
 
+    let mut replacements = Vec::with_capacity(images.len());
     for (image_path, image_url) in images {
         let Some(image_url) = image_url.as_str() else {
             continue;
         };
         let safe_path = sanitize_relative_path(image_path)
-            .unwrap_or_else(|| PathBuf::from(format!("images/{}", stable_name(image_path))));
-        let full_path = tmp_dir.join(safe_path);
+            .unwrap_or_else(|| PathBuf::from(stable_name(image_path)));
+        let stored_path = PathBuf::from("images").join("markdown").join(safe_path);
+        let full_path = tmp_dir.join(&stored_path);
         download_file(client, image_url, &full_path).await?;
+        replacements.push((
+            image_path.to_string(),
+            stored_path.to_string_lossy().replace('\\', "/"),
+        ));
     }
 
-    Ok(())
+    Ok(replacements)
+}
+
+fn rewrite_markdown_image_paths(
+    text: &str,
+    replacements: &[(String, String)],
+    prefix: &str,
+) -> String {
+    let mut rewritten = text.to_string();
+    for (original, stored) in replacements {
+        let target = format!("{prefix}{stored}");
+        rewritten = rewritten.replace(original, &target);
+    }
+    rewritten
 }
 
 async fn download_output_images(
@@ -462,6 +487,7 @@ async fn commit_tmp(output_dir: &Path) -> Result<()> {
     )
     .await?;
     fs::rename(tmp_dir.join("merged.md"), output_dir.join("merged.md")).await?;
+    remove_path_if_exists(&output_dir.join("error.log")).await?;
     remove_path_if_exists(&tmp_dir).await?;
     Ok(())
 }
