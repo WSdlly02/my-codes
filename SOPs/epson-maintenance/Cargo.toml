@@ -1,0 +1,28 @@
+[package]
+name = "epson-maintenance"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "epson-maintenance"
+path = "src/bin/epson-maintenance.rs"
+
+[dependencies]
+lettre = {
+  version = "0.11",
+  default-features = false,
+  features = [
+    "builder",
+    "ring",
+    "rustls",
+    "smtp-transport",
+    "webpki-roots",
+  ]
+}
+
+[profile.release]
+opt-level = 3
+strip = true  # 去除符号表，减小体积
+lto = "fat"  # 跨 crate 链接时全局优化，性能提升 10-30%
+panic = "abort"  # 减小体积并略微提升性能
+codegen-units = 1  # 禁止并行编译，允许更激进的内联优化
