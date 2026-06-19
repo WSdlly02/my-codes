@@ -10,13 +10,13 @@ path = "src/bin/dff.rs"
 [dependencies]
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
-sha2 = "0.11"
 hex = "0.4"
+sha2 = "0.11"
 walkdir = "2"
 
 [profile.release]
 opt-level = 3
-lto = "fat"       # 跨 crate 链接时全局优化，性能提升 10-30%
-codegen-units = 1 # 禁止并行编译，允许更激进的内联优化
-strip = true      # 去除符号表，减小体积
-panic = "abort"   # 减小体积并略微提升性能
+strip = true  # 去除符号表，减小体积
+lto = "fat"  # 跨 crate 链接时全局优化，性能提升 10-30%
+panic = "abort"  # 减小体积并略微提升性能
+codegen-units = 1  # 禁止并行编译，允许更激进的内联优化
