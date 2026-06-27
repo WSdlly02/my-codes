@@ -27,14 +27,15 @@ impl ResolverConfig {
 
         let custom_proxies = load_vps_configs(&vps_configs_dir)?;
         let mut custom_rules: Vec<String> = vec![
-            "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve".to_string(),
+            "IP-CIDR,10.144.144.0/24,DIRECT,no-resolve".to_string(), // easytier
+            "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve".to_string(),   // tailscale
             "DOMAIN-SUFFIX,tailscale.com,DIRECT".to_string(),
         ];
         custom_rules.extend(
             custom_proxies
                 .iter()
                 .filter(|node| node.direct_rule)
-                .map(|node| format!("IP-CIDR,{}/32,DIRECT,no-resolve", node.ip)),
+                .map(|node| format!("IP-CIDR,{}/32,DIRECT,no-resolve", node.server)),
         );
 
         let auto_group_map = build_auto_group_map(&custom_proxies);
@@ -111,20 +112,25 @@ fn load_vps_configs(dir: &Path) -> Result<Vec<VpsConfig>> {
             }
 
             configs.push(VpsConfig {
+                direct_rule: raw.direct_rule,
+                groups: raw.groups,
+
                 name: raw.name,
-                uuid: raw.uuid,
-                ip: raw.server,
-                port: raw.port,
-                public_key: raw.reality_opts.public_key,
-                short_id: raw.reality_opts.short_id,
                 kind: raw.kind,
+                server: raw.server,
+                port: raw.port,
+                uuid: raw.uuid,
+
                 flow: raw.flow,
+                packet_encoding: raw.packet_encoding,
+                network: raw.network,
                 udp: raw.udp,
                 tls: raw.tls,
                 servername: raw.servername,
                 client_fingerprint: raw.client_fingerprint,
-                groups: raw.groups,
-                direct_rule: raw.direct_rule,
+
+                public_key: raw.reality_opts.public_key,
+                short_id: raw.reality_opts.short_id,
             });
         }
     }
@@ -175,6 +181,20 @@ fn validate_vps_toml(raw: &VpsToml, path: &Path) -> Result<()> {
     }
     if raw.flow.trim().is_empty() {
         bail!("empty VPS flow for id `{}` in {}", raw.id, path.display());
+    }
+    if raw.packet_encoding.trim().is_empty() {
+        bail!(
+            "empty VPS packet-encoding for id `{}` in {}",
+            raw.id,
+            path.display()
+        );
+    }
+    if raw.network.trim().is_empty() {
+        bail!(
+            "empty VPS network for id `{}` in {}",
+            raw.id,
+            path.display()
+        );
     }
     if raw.servername.trim().is_empty() {
         bail!(
@@ -256,7 +276,7 @@ mod tests {
 
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].name, "JP ByteVirt VPS");
-        assert_eq!(configs[0].ip, "203.0.113.10");
+        assert_eq!(configs[0].server, "203.0.113.10");
         assert_eq!(configs[0].groups, ["日本", "自动", "手动"]);
         assert!(configs[0].direct_rule);
     }

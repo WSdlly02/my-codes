@@ -318,14 +318,18 @@ fn render_proxies_json(proxies: &[VpsConfig]) -> Result<String> {
         .map(|proxy| RenderedProxy {
             name: &proxy.name,
             kind: &proxy.kind,
-            uuid: &proxy.uuid,
-            server: &proxy.ip,
+            server: &proxy.server,
             port: proxy.port,
+            uuid: &proxy.uuid,
+
             flow: &proxy.flow,
+            packet_encoding: &proxy.packet_encoding,
+            network: &proxy.network,
             udp: proxy.udp,
             tls: proxy.tls,
             servername: &proxy.servername,
             client_fingerprint: &proxy.client_fingerprint,
+
             reality_opts: RealityOpts {
                 public_key: &proxy.public_key,
                 short_id: &proxy.short_id,

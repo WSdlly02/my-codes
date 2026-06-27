@@ -18,20 +18,25 @@ pub struct ResolverConfig {
 
 #[derive(Clone, Debug)]
 pub struct VpsConfig {
+    pub direct_rule: bool,
+    pub groups: Vec<String>,
+
     pub name: String,
-    pub uuid: String,
-    pub ip: String,
+    pub kind: String, // alias for "type"
+    pub server: String,
     pub port: u16,
-    pub public_key: String,
-    pub short_id: String,
-    pub kind: String,
+    pub uuid: String,
+
     pub flow: String,
+    pub packet_encoding: String,
+    pub network: String,
     pub udp: bool,
     pub tls: bool,
     pub servername: String,
     pub client_fingerprint: String,
-    pub groups: Vec<String>,
-    pub direct_rule: bool,
+
+    pub public_key: String,
+    pub short_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,34 +51,36 @@ pub(super) struct VpsToml {
     pub id: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(rename = "direct-rule")]
+    pub direct_rule: bool,
+    pub groups: Vec<String>,
+
     pub name: String,
-    #[serde(default = "default_proxy_type", rename = "type")]
+    #[serde(rename = "type")]
     pub kind: String,
-    pub uuid: String,
     pub server: String,
     pub port: u16,
-    #[serde(default = "default_flow")]
+    pub uuid: String,
+
     pub flow: String,
-    #[serde(default = "default_true")]
+    #[serde(rename = "packet-encoding")]
+    pub packet_encoding: String,
+    pub network: String,
     pub udp: bool,
-    #[serde(default = "default_true")]
     pub tls: bool,
-    #[serde(default = "default_servername")]
     pub servername: String,
-    #[serde(default = "default_client_fingerprint")]
+    #[serde(rename = "client-fingerprint")]
     pub client_fingerprint: String,
-    #[serde(rename = "reality-opts", alias = "reality_opts")]
+
+    #[serde(rename = "reality-opts")]
     pub reality_opts: RealityOptsToml,
-    pub groups: Vec<String>,
-    #[serde(default = "default_true")]
-    pub direct_rule: bool,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct RealityOptsToml {
-    #[serde(rename = "public-key", alias = "public_key")]
+    #[serde(rename = "public-key")]
     pub public_key: String,
-    #[serde(rename = "short-id", alias = "short_id")]
+    #[serde(rename = "short-id")]
     pub short_id: String,
 }
 
@@ -82,15 +89,20 @@ pub struct RenderedProxy<'a> {
     pub name: &'a str,
     #[serde(rename = "type")]
     pub kind: &'a str,
-    pub uuid: &'a str,
     pub server: &'a str,
     pub port: u16,
+    pub uuid: &'a str,
+
     pub flow: &'a str,
+    #[serde(rename = "packet-encoding")]
+    pub packet_encoding: &'a str,
+    pub network: &'a str,
     pub udp: bool,
     pub tls: bool,
     pub servername: &'a str,
     #[serde(rename = "client-fingerprint")]
     pub client_fingerprint: &'a str,
+
     #[serde(rename = "reality-opts")]
     pub reality_opts: RealityOpts<'a>,
 }
@@ -105,20 +117,4 @@ pub struct RealityOpts<'a> {
 
 fn default_true() -> bool {
     true
-}
-
-fn default_proxy_type() -> String {
-    "vless".to_string()
-}
-
-fn default_flow() -> String {
-    "xtls-rprx-vision".to_string()
-}
-
-fn default_servername() -> String {
-    "www.cloudflare.com".to_string()
-}
-
-fn default_client_fingerprint() -> String {
-    "chrome".to_string()
 }

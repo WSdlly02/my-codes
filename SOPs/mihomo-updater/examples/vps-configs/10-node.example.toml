@@ -1,20 +1,25 @@
 version = 1
 
 [[vps]]
+# 解析器配置
 id = "jp-bytevirt"
 enabled = true
+direct-rule = true  # 加入直连规则
+groups = ["日本", "自动", "手动"]  # 加入分组
+
+# VPS 配置
 name = "JP ByteVirt VPS"
 type = "vless"
-uuid = "00000000-0000-0000-0000-000000000000"
 server = "203.0.113.10"
-port = 8443
+port = 443
+uuid = "00000000-0000-0000-0000-000000000000"
 flow = "xtls-rprx-vision"
+packet-encoding = "xudp"
+network = "tcp"
 udp = true
 tls = true
 servername = "www.cloudflare.com"
-client_fingerprint = "chrome"
-groups = ["日本", "自动", "手动"]
-direct_rule = true
+client-fingerprint = "chrome"
 
 [vps.reality-opts]
 public-key = "replace-with-public-key"
