@@ -55,11 +55,7 @@
     }
     // forExposedSystems (
       system: with (pkgs' { inherit system; }); {
-        devShells."${system}" = rec {
-          default = callPackage ./Nix/devShells-default.nix { };
-          binEnv = callPackage ./Nix/devShells-binEnv.nix { };
-          binEnvWithRocm = binEnv { rocmSupport = true; };
-        };
+        devShells."${system}" = { };
         formatter."${system}" = nixfmt-tree;
         legacyPackages."${system}" = {
           # Packages here won't be exposed and used as a library in other parts of the flake
