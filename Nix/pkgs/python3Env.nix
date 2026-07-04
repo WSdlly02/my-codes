@@ -44,14 +44,19 @@ python.withPackages (
   f: # f <- python3Packages
   with f;
   [
-    dbus-python
-    pandas
-    psutil
-    pydantic
+    # 1. 核心运维与配置
     pyyaml
-    urllib3
+    pydantic
+
+    # 2. 系统控制与监控
+    psutil
+    sh
+
+    # 3. 网络与远程
     requests
-    virtualenv
+
+    # 4. 桌面与底层集成
+    dbus-python
   ]
   ++ (extraPackages f)
 )

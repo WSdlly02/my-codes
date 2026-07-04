@@ -56,15 +56,9 @@
     // forExposedSystems (
       system: with (pkgs' { inherit system; }); {
         devShells."${system}" = rec {
-          default = binEnv;
+          default = callPackage ./Nix/devShells-default.nix { };
           binEnv = callPackage ./Nix/devShells-binEnv.nix { };
-          binEnvWithRocm = callPackage ./Nix/devShells-binEnv.nix { rocmSupport = true; };
-          tmp = binEnv.override {
-            extraPkgs = [
-              libreoffice-fresh
-              poppler-utils
-            ];
-          };
+          binEnvWithRocm = binEnv { rocmSupport = true; };
         };
         formatter."${system}" = nixfmt-tree;
         legacyPackages."${system}" = {

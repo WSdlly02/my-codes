@@ -93,7 +93,7 @@ mkShell rec {
       rocmtoolkit_joined
     ];
 
-  shellHook = ''
-    export LD_LIBRARY_PATH=${lib.makeLibraryPath packages}:$LD_LIBRARY_PATH
-  '';
+  env = {
+    LD_LIBRARY_PATH = lib.makeLibraryPath packages;
+  };
 }
