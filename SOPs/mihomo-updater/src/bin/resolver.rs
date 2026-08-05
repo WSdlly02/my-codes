@@ -12,13 +12,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use mihomo_updater::{
-    models::{RealityOpts, RenderedProxy, ResolverConfig, VpsConfig},
-    yq::run_yq,
-};
+use mihomo_updater::{models::ResolverConfig, yq::run_yq};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::to_string;
+use serde_json::{Map, Value};
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use url::Url;
@@ -76,13 +74,17 @@ async fn main() -> Result<()> {
         resolver_config: Arc::new(config),
     };
 
+    let addr = format!("0.0.0.0:{}", state.resolver_config.port);
+    let addr = addr
+        .parse::<SocketAddr>()
+        .context("failed to parse socket address")?;
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/config/minimal", get(handle_minimal))
         .route("/config/full", get(handle_full))
-        .with_state(state.clone());
+        .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], state.resolver_config.port));
     info!("server listening on {addr}");
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -192,19 +194,27 @@ fn config_response(body: Vec<u8>) -> Response {
 async fn generate_config(state: &AppState) -> Result<Vec<u8>> {
     let bytes = fetch_remote_config_with_fallback(state).await?;
 
-    let custom_proxies_json = render_proxies_json(&state.resolver_config.custom_proxies)?;
-    let custom_rules_json = to_string(&state.resolver_config.custom_rules)
+    // A list of custom proxies to be merged into the generated config. Each proxy is represented as a JSON object.
+    let custom_proxies: Box<[&Map<String, Value>]> =
+        state.resolver_config.custom_proxies().collect();
+
+    // Stringify the custom proxies and rules to be used in the yq filter.
+    let custom_proxies =
+        to_string(&custom_proxies).context("failed to serialize custom proxies")?;
+
+    // Stringify the custom rules to be used in the yq filter.
+    let custom_rules = to_string(&state.resolver_config.custom_rules())
         .context("failed to serialize custom rules")?;
 
     let mut filter_parts = vec![
         format!(
-            r#"{custom_proxies_json} as $new | .proxies |= (map(select([.name] - ($new | map(.name)) | length > 0)) + $new)"#
+            r#"{custom_proxies} as $new | .proxies |= (map(select([.name] - ($new | map(.name)) | length > 0)) + $new)"#
         ),
-        format!(r#".rules = {custom_rules_json} + .rules"#),
+        format!(r#".rules = {custom_rules} + .rules"#),
     ];
 
-    for (keyword, nodes) in &state.resolver_config.auto_group_map {
-        let nodes_json = to_string(nodes).context("failed to serialize group nodes")?;
+    for (keyword, nodes) in state.resolver_config.auto_group_map() {
+        let nodes_json = to_string(&nodes).context("failed to serialize group nodes")?;
         filter_parts.push(format!(
             r#".["proxy-groups"][] |= (select(.name | test("{keyword}")) | .proxies = {nodes_json} + (.proxies - {nodes_json}))"#
         ));
@@ -310,32 +320,4 @@ fn build_subconverter_url(config: &ResolverConfig) -> Result<String> {
 async fn merge_with_origin(generated: &[u8], origin_path: &str) -> Result<Vec<u8>> {
     let filter = r#"select(fileIndex == 0) as $origin | select(fileIndex == 1) as $gen | $origin | .proxies = $gen.proxies | .["proxy-groups"] = $gen.["proxy-groups"] | .rules = $gen.rules"#;
     run_yq("eval-all", generated, filter, &[origin_path, "-"]).await
-}
-
-fn render_proxies_json(proxies: &[VpsConfig]) -> Result<String> {
-    let rendered: Vec<_> = proxies
-        .iter()
-        .map(|proxy| RenderedProxy {
-            name: &proxy.name,
-            kind: &proxy.kind,
-            server: &proxy.server,
-            port: proxy.port,
-            uuid: &proxy.uuid,
-
-            flow: &proxy.flow,
-            packet_encoding: &proxy.packet_encoding,
-            network: &proxy.network,
-            udp: proxy.udp,
-            tls: proxy.tls,
-            servername: &proxy.servername,
-            client_fingerprint: &proxy.client_fingerprint,
-
-            reality_opts: RealityOpts {
-                public_key: &proxy.public_key,
-                short_id: &proxy.short_id,
-            },
-        })
-        .collect();
-
-    to_string(&rendered).context("failed to serialize custom proxies")
 }

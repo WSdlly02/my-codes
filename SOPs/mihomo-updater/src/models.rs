@@ -1,120 +1,75 @@
-use std::collections::HashMap;
+use serde::Deserialize;
+use serde_json::{Map, Value};
 
-use serde::{Deserialize, Serialize};
-
-// 解析器配置和相关数据模型
-#[derive(Clone, Debug)]
+/// 解析器配置和相关数据模型
+#[derive(Debug)]
 pub struct ResolverConfig {
-    pub airport_url: String,                          // 机场订阅链接
-    pub origin_config_path: String,                   // 原始配置文件路径
-    pub access_token: String,                         // 配置端点访问令牌
-    pub subconverter_host: String,                    // subconverter 服务地址
-    pub port: u16,                                    // 监听端口
-    pub rules_url: String,                            // 规则链接
-    pub custom_proxies: Vec<VpsConfig>,               // 自定义代理配置
-    pub custom_rules: Vec<String>,                    // 自定义规则
-    pub auto_group_map: HashMap<String, Vec<String>>, // 自动分组映射
+    pub airport_url: String,        // 机场订阅链接
+    pub origin_config_path: String, // 原始配置文件路径
+    pub access_token: String,       // 配置端点访问令牌
+    pub subconverter_host: String,  // subconverter 服务地址
+    pub port: u16,                  // 监听端口
+    pub rules_url: String,          // 规则链接
+
+    pub vps_configs: Box<[VpsConfig]>, // VPS 配置
 }
 
-#[derive(Clone, Debug)]
+/// Validated single VPS configuration used as the runtime source of truth.
+#[derive(Debug)]
 pub struct VpsConfig {
-    pub direct_rule: bool,
-    pub groups: Vec<String>,
-
-    pub name: String,
-    pub kind: String, // alias for "type"
-    pub server: String,
-    pub port: u16,
-    pub uuid: String,
-
-    pub flow: String,
-    pub packet_encoding: String,
-    pub network: String,
-    pub udp: bool,
-    pub tls: bool,
-    pub servername: String,
-    pub client_fingerprint: String,
-
-    pub public_key: String,
-    pub short_id: String,
+    pub(super) groups: Box<[String]>,
+    pub(super) direct_rule: bool,
+    pub(super) proxy: Map<String, Value>,
 }
 
+impl VpsConfig {
+    pub fn groups(&self) -> &[String] {
+        &self.groups
+    }
+
+    pub fn proxy(&self) -> &Map<String, Value> {
+        &self.proxy
+    }
+
+    pub fn name(&self) -> &str {
+        self.proxy_get("name")
+    }
+
+    pub fn direct_rule_server_ip(&self) -> Option<&str> {
+        self.direct_rule.then(|| self.proxy_get("server"))
+    }
+
+    fn proxy_get(&self, field: &str) -> &str {
+        self.proxy
+            .get(field)
+            .and_then(Value::as_str)
+            .expect("VpsConfig is only constructed after proxy field validation")
+    }
+}
+
+/// Config file structure, can contain multiple VPS configurations
+///
+/// Not used in runtime, only used for deserialization of the config file.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct VpsConfigFile {
-    pub version: Option<u32>,
-    #[serde(default)]
-    pub vps: Vec<VpsToml>,
+    pub version: u32,
+    pub vps: Box<[VpsToml]>,
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct VpsConfigFileVersion {
+    pub version: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct VpsToml {
     pub id: String,
-    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(rename = "direct-rule")]
     pub direct_rule: bool,
-    pub groups: Vec<String>,
-
-    pub name: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub server: String,
-    pub port: u16,
-    pub uuid: String,
-
-    pub flow: String,
-    #[serde(rename = "packet-encoding")]
-    pub packet_encoding: String,
-    pub network: String,
-    pub udp: bool,
-    pub tls: bool,
-    pub servername: String,
-    #[serde(rename = "client-fingerprint")]
-    pub client_fingerprint: String,
-
-    #[serde(rename = "reality-opts")]
-    pub reality_opts: RealityOptsToml,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct RealityOptsToml {
-    #[serde(rename = "public-key")]
-    pub public_key: String,
-    #[serde(rename = "short-id")]
-    pub short_id: String,
-}
-
-#[derive(Serialize)]
-pub struct RenderedProxy<'a> {
-    pub name: &'a str,
-    #[serde(rename = "type")]
-    pub kind: &'a str,
-    pub server: &'a str,
-    pub port: u16,
-    pub uuid: &'a str,
-
-    pub flow: &'a str,
-    #[serde(rename = "packet-encoding")]
-    pub packet_encoding: &'a str,
-    pub network: &'a str,
-    pub udp: bool,
-    pub tls: bool,
-    pub servername: &'a str,
-    #[serde(rename = "client-fingerprint")]
-    pub client_fingerprint: &'a str,
-
-    #[serde(rename = "reality-opts")]
-    pub reality_opts: RealityOpts<'a>,
-}
-
-#[derive(Serialize)]
-pub struct RealityOpts<'a> {
-    #[serde(rename = "public-key")]
-    pub public_key: &'a str,
-    #[serde(rename = "short-id")]
-    pub short_id: &'a str,
-}
-
-fn default_true() -> bool {
-    true
+    pub groups: Box<[String]>,
+    #[serde(rename = "proxy-json")]
+    pub proxy_json: String,
 }

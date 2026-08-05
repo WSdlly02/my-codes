@@ -1,4 +1,4 @@
-version = 1
+version = 2
 
 [[vps]]
 # 解析器配置
@@ -7,20 +7,24 @@ enabled = true
 direct-rule = true  # 加入直连规则
 groups = ["日本", "自动", "手动"]  # 加入分组
 
-# VPS 配置
-name = "JP ByteVirt VPS"
-type = "vless"
-server = "203.0.113.10"
-port = 443
-uuid = "00000000-0000-0000-0000-000000000000"
-flow = "xtls-rprx-vision"
-packet-encoding = "xudp"
-network = "tcp"
-udp = true
-tls = true
-servername = "www.cloudflare.com"
-client-fingerprint = "chrome"
-
-[vps.reality-opts]
-public-key = "replace-with-public-key"
-short-id = "replace-with-short-id"
+# 原样注入 Mihomo proxies 的 JSON 对象
+proxy-json = '''
+{
+  "name": "JP ByteVirt VPS",
+  "type": "vless",
+  "server": "203.0.113.10",
+  "port": 443,
+  "uuid": "00000000-0000-0000-0000-000000000000",
+  "flow": "xtls-rprx-vision",
+  "packet-encoding": "xudp",
+  "network": "tcp",
+  "udp": true,
+  "tls": true,
+  "servername": "www.cloudflare.com",
+  "client-fingerprint": "chrome",
+  "reality-opts": {
+    "public-key": "replace-with-public-key",
+    "short-id": "replace-with-short-id"
+  }
+}
+'''
