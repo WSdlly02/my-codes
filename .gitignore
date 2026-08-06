@@ -23,6 +23,9 @@ result/
 target/
 .direnv/
 .venv/
+
+# 忽略 hackathons 目录下的所有内容
+/hackathons/
 # 忽略生成的 PDF 文件和下载的图片
 SOPs/pdf-process/*.pdf
 SOPs/pdf-process/downloaded_images/
