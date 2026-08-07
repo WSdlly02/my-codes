@@ -1,15 +1,17 @@
+use std::path::PathBuf;
+
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 /// 解析器配置和相关数据模型
 #[derive(Debug)]
 pub struct ResolverConfig {
-    pub airport_url: String,        // 机场订阅链接
-    pub origin_config_path: String, // 原始配置文件路径
-    pub access_token: String,       // 配置端点访问令牌
-    pub subconverter_host: String,  // subconverter 服务地址
-    pub port: u16,                  // 监听端口
-    pub rules_url: String,          // 规则链接
+    pub airport_url: String,          // 机场订阅链接
+    pub origin_config_path: String,   // 原始配置文件路径
+    pub access_token: String,         // 访问令牌
+    pub port: u16,                    // 端口号
+    pub cache_dir: PathBuf,           // 缓存目录
+    pub acl4ssr_config_path: PathBuf, // ACL4SSR 配置文件路径
 
     pub vps_configs: Box<[VpsConfig]>, // VPS 配置
 }

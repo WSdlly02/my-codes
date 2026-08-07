@@ -1,8 +1,9 @@
-use std::{
-    net::SocketAddr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+//! HTTP service that replaces the required subconverter pipeline.
+//!
+//! Airport proxy objects remain opaque. This service only generates proxy groups and rules,
+//! then delegates YAML extraction and merging to yq.
+
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use axum::{
@@ -12,33 +13,38 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use mihomo_updater::{models::ResolverConfig, yq::run_yq};
+use mihomo_updater::{
+    acl4ssr::{Acl4SsrConfig, RenderedProxyGroup},
+    models::ResolverConfig,
+    remote_cache::RemoteFileCache,
+    yq::{ensure_yq_available, run_yq},
+};
 use reqwest::Client;
-use serde::Deserialize;
-use serde_json::to_string;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use tokio::sync::RwLock;
 use tracing::{error, info, warn};
-use url::Url;
 
 const REMOTE_CONFIG_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60); // 7 days
 
 #[derive(Clone)]
 struct AppState {
+    acl4ssr: Arc<Acl4SsrConfig>,
+    cache: RemoteFileCache,
     client: Client,
-    cached_remote_config: Arc<RwLock<Option<CachedRemoteConfig>>>,
     resolver_config: Arc<ResolverConfig>,
-}
-
-#[derive(Clone)]
-struct CachedRemoteConfig {
-    data: Vec<u8>,
-    updated_at: Instant,
 }
 
 #[derive(Deserialize)]
 struct AccessQuery {
     access_token: Option<String>,
+}
+
+#[derive(Serialize)]
+struct GeneratedSections<'a> {
+    proxies: Box<[&'a Map<String, Value>]>,
+    #[serde(rename = "proxy-groups")]
+    proxy_groups: Box<[RenderedProxyGroup]>,
+    rules: Box<[String]>,
 }
 
 #[derive(Debug)]
@@ -62,15 +68,21 @@ where
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Fail at startup instead of reporting a misleading remote-cache error on the first request.
+    ensure_yq_available().await?;
+
     let config = ResolverConfig::load()?;
+    let acl4ssr = Acl4SsrConfig::load(&config.acl4ssr_config_path)?;
+    let cache = RemoteFileCache::new(config.cache_dir.clone(), REMOTE_CONFIG_CACHE_TTL).await?;
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .context("failed to build http client")?;
 
     let state = AppState {
+        acl4ssr: Arc::new(acl4ssr),
+        cache,
         client,
-        cached_remote_config: Arc::new(RwLock::new(None)),
         resolver_config: Arc::new(config),
     };
 
@@ -192,80 +204,96 @@ fn config_response(body: Vec<u8>) -> Response {
 }
 
 async fn generate_config(state: &AppState) -> Result<Vec<u8>> {
-    let bytes = fetch_remote_config_with_fallback(state).await?;
+    let airport_config = fetch_airport_config_with_fallback(state).await?;
 
-    // A list of custom proxies to be merged into the generated config. Each proxy is represented as a JSON object.
-    let custom_proxies: Box<[&Map<String, Value>]> =
-        state.resolver_config.custom_proxies().collect();
+    // ACL4SSR only needs names for regex group matching. Node fields stay untouched in YAML.
+    let airport_node_names = extract_airport_node_names(&airport_config).await?;
 
-    // Stringify the custom proxies and rules to be used in the yq filter.
-    let custom_proxies =
-        to_string(&custom_proxies).context("failed to serialize custom proxies")?;
+    // Render proxy groups
+    // Example: { "name": "ACL4SSR Group", "type": "select", "proxies": ["Airport Hysteria2", "HongKong V2Ray"] }
+    let proxy_groups = state
+        .acl4ssr
+        .render_groups(&airport_node_names, state.resolver_config.auto_group_map())?;
 
-    // Stringify the custom rules to be used in the yq filter.
-    let custom_rules = to_string(&state.resolver_config.custom_rules())
-        .context("failed to serialize custom rules")?;
+    // Render rules
+    // Example: ["IP-CIDR,127.0.0.0/8,DIRECT,no-resolve", "DOMAIN-SUFFIX,example.com,ACL4SSR Group"]
+    let acl_rules = state
+        .acl4ssr
+        .render_rules(&state.client, &state.cache)
+        .await?;
 
-    let mut filter_parts = vec![
-        format!(
-            r#"{custom_proxies} as $new | .proxies |= (map(select([.name] - ($new | map(.name)) | length > 0)) + $new)"#
-        ),
-        format!(r#".rules = {custom_rules} + .rules"#),
-    ];
+    // Local direct rules take precedence over the downloaded ACL4SSR rules.
+    let mut rules = state.resolver_config.custom_rules().into_vec();
+    rules.extend(acl_rules);
 
-    for (keyword, nodes) in state.resolver_config.auto_group_map() {
-        let nodes_json = to_string(&nodes).context("failed to serialize group nodes")?;
-        filter_parts.push(format!(
-            r#".["proxy-groups"][] |= (select(.name | test("{keyword}")) | .proxies = {nodes_json} + (.proxies - {nodes_json}))"#
-        ));
-    }
-
-    let filter = filter_parts.join(" | ");
-    run_yq("eval", &bytes, &filter, &["-"]).await
+    // These are the only sections owned by the resolver; yq preserves everything else.
+    let sections = GeneratedSections {
+        proxies: state.resolver_config.custom_proxies().collect(),
+        proxy_groups,
+        rules: rules.into_boxed_slice(),
+    };
+    let sections =
+        serde_json::to_vec(&sections).context("failed to serialize generated sections")?;
+    merge_generated_sections(&airport_config, &sections).await
 }
 
-async fn fetch_remote_config_with_fallback(state: &AppState) -> Result<Vec<u8>> {
-    let url = build_subconverter_url(&state.resolver_config)?;
-    info!("fetching from subconverter: {url}");
+async fn fetch_airport_config_with_fallback(state: &AppState) -> Result<Vec<u8>> {
+    info!("fetching airport config");
 
-    match fetch_and_validate_remote_config(&state.client, &url).await {
-        Ok(bytes) => {
-            *state.cached_remote_config.write().await = Some(CachedRemoteConfig {
-                data: bytes.clone(),
-                updated_at: Instant::now(),
-            });
-            info!("updated remote config cache from subconverter");
-            Ok(bytes)
-        }
-        Err(err) => {
-            if let Some(cached) = get_usable_cached_remote_config(state).await {
-                warn!("failed to fetch subconverter config, using cached remote config: {err:#}");
-                Ok(cached)
-            } else {
-                Err(err)
-            }
-        }
-    }
+    // Invalid upstream YAML must never replace a previously usable cache entry.
+    let upstream = match fetch_url(&state.client, &state.resolver_config.airport_url).await {
+        Ok(bytes) => match extract_airport_node_names(&bytes).await {
+            Ok(_) => Ok(bytes),
+            Err(error) => Err(error).context("airport config validation failed"),
+        },
+        Err(error) => Err(error),
+    };
+
+    state
+        .cache
+        .resolve(
+            "airport",
+            "yaml",
+            &state.resolver_config.airport_url,
+            upstream,
+        )
+        .await
 }
 
-async fn fetch_and_validate_remote_config(client: &Client, target: &str) -> Result<Vec<u8>> {
-    let bytes = fetch_url(client, target).await?;
-    if bytes.len() < 100 {
-        bail!("response too short");
+/// Extracts the names of all airport nodes from the config, for ACL4SSR group matching.
+///
+/// Example: ["Airport Hysteria2", "HongKong V2Ray", "Local Override"]
+async fn extract_airport_node_names(config: &[u8]) -> Result<Box<[String]>> {
+    if config.len() < 100 {
+        bail!("airport config response too short");
     }
-    Ok(bytes)
+
+    let names = run_yq("eval", config, "[.proxies[].name]", &["-"]).await?;
+    let names: Box<[String]> =
+        serde_json::from_slice(&names).context("airport config has invalid proxy names")?;
+    if names.is_empty() {
+        bail!("airport config does not contain any proxies");
+    }
+    Ok(names)
 }
 
-async fn get_usable_cached_remote_config(state: &AppState) -> Option<Vec<u8>> {
-    let cached = state.cached_remote_config.read().await;
-    let cached = cached.as_ref()?;
+async fn merge_generated_sections(airport: &[u8], sections: &[u8]) -> Result<Vec<u8>> {
+    let mut documents = Vec::with_capacity(airport.len() + sections.len() + 6);
+    documents.extend_from_slice(airport);
+    documents.extend_from_slice(b"\n---\n");
+    documents.extend_from_slice(sections);
 
-    if cached.updated_at.elapsed() <= REMOTE_CONFIG_CACHE_TTL {
-        Some(cached.data.clone())
-    } else {
-        warn!("cached remote config is older than 7 days; refusing fallback");
-        None
-    }
+    // Keep the airport document as the base. A same-name local VPS replaces the airport node.
+    let filter = r#"
+select(documentIndex == 0) as $base |
+select(documentIndex == 1) as $sections |
+$base |
+($sections.proxies // []) as $new |
+.proxies = ((.proxies // []) | map(select([.name] - ($new | map(.name)) | length > 0)) + $new) |
+.["proxy-groups"] = $sections.["proxy-groups"] |
+.rules = $sections.rules
+"#;
+    run_yq("eval-all", &documents, filter, &["-"]).await
 }
 
 async fn fetch_url(client: &Client, target: &str) -> Result<Vec<u8>> {
@@ -274,50 +302,91 @@ async fn fetch_url(client: &Client, target: &str) -> Result<Vec<u8>> {
         .header(reqwest::header::USER_AGENT, "Clash/Meta")
         .send()
         .await
-        .with_context(|| format!("request failed: {target}"))?;
+        .context("airport config request failed")?;
 
     let status = response.status();
     if !status.is_success() {
-        bail!("http error {status} while fetching {target}");
+        bail!("airport config returned http error {status}");
     }
 
     response
         .bytes()
         .await
         .map(|bytes| bytes.to_vec())
-        .with_context(|| format!("failed to read response body: {target}"))
-}
-
-fn build_subconverter_url(config: &ResolverConfig) -> Result<String> {
-    let mut url = Url::parse(&format!(
-        "{}/sub",
-        config.subconverter_host.trim_end_matches('/')
-    ))
-    .context("invalid SUBCONVERTER_HOST")?;
-
-    {
-        let mut pairs = url.query_pairs_mut();
-        pairs.append_pair("target", "clash");
-        pairs.append_pair("url", &config.airport_url);
-        pairs.append_pair("config", &config.rules_url);
-        pairs.append_pair("insert", "true");
-        pairs.append_pair("emoji", "true");
-        pairs.append_pair("list", "false");
-        // pairs.append_pair("tfo", "true");
-        // 原配置无此字段
-        pairs.append_pair("scv", "true");
-        // skip_cert_verify 在原配置中为 true
-        pairs.append_pair("fdn", "true");
-        pairs.append_pair("expand", "true");
-        pairs.append_pair("sort", "false");
-        pairs.append_pair("udp", "true");
-        pairs.append_pair("new_name", "true");
-    }
-
-    Ok(url.to_string())
+        .context("failed to read airport config response body")
 }
 
 async fn merge_with_origin(generated: &[u8], origin_path: &str) -> Result<Vec<u8>> {
+    // Full config keeps the local shell and replaces only resolver-owned dynamic sections.
     let filter = r#"select(fileIndex == 0) as $origin | select(fileIndex == 1) as $gen | $origin | .proxies = $gen.proxies | .["proxy-groups"] = $gen.["proxy-groups"] | .rules = $gen.rules"#;
     run_yq("eval-all", generated, filter, &[origin_path, "-"]).await
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::{extract_airport_node_names, merge_generated_sections};
+
+    const AIRPORT: &[u8] = br#"
+mixed-port: 7890
+proxies:
+  - name: Airport Hysteria2
+    type: hysteria2
+    server: airport.example.com
+    password: opaque-secret
+    obfs: salamander
+  - name: Local Override
+    type: ss
+    server: old.example.com
+    port: 443
+proxy-groups:
+  - name: Airport Group
+    type: select
+    proxies: [Airport Hysteria2]
+rules:
+  - MATCH,DIRECT
+"#;
+
+    const SECTIONS: &[u8] = br#"
+{
+  "proxies": [
+    {
+      "name": "Local Override",
+      "type": "vless",
+      "server": "192.0.2.10",
+      "port": 8443,
+      "future-protocol-field": {"preserved": true}
+    }
+  ],
+  "proxy-groups": [
+    {
+      "name": "Generated Group",
+      "type": "select",
+      "proxies": ["Local Override", "Airport Hysteria2"]
+    }
+  ],
+  "rules": ["IP-CIDR,192.0.2.10/32,DIRECT,no-resolve", "MATCH,Generated Group"]
+}
+"#;
+
+    #[tokio::test]
+    async fn generated_sections_replace_only_resolver_owned_sections() {
+        let names = extract_airport_node_names(AIRPORT).await.unwrap();
+        assert_eq!(names.as_ref(), ["Airport Hysteria2", "Local Override"]);
+
+        let merged = merge_generated_sections(AIRPORT, SECTIONS).await.unwrap();
+        let merged: Value = serde_json::from_slice(&merged).unwrap();
+
+        assert_eq!(merged["mixed-port"], 7890);
+        assert_eq!(merged["proxies"].as_array().unwrap().len(), 2);
+        assert_eq!(merged["proxies"][0]["password"], "opaque-secret");
+        assert_eq!(merged["proxies"][0]["obfs"], "salamander");
+        assert_eq!(
+            merged["proxies"][1]["future-protocol-field"]["preserved"],
+            true
+        );
+        assert_eq!(merged["proxy-groups"][0]["name"], "Generated Group");
+        assert_eq!(merged["rules"][1], "MATCH,Generated Group");
+    }
 }

@@ -23,14 +23,11 @@ impl ResolverConfig {
         let origin_config_path = load_env_required("ORIGIN_CONFIG_PATH")?;
         let access_token = load_env_required("ACCESS_TOKEN")?;
         let vps_configs_dir = PathBuf::from(load_env_required("VPS_CONFIGS_DIR")?);
-        let subconverter_host = load_env_default("SUBCONVERTER_HOST", "http://127.0.0.1:25500");
+        let acl4ssr_config_path = PathBuf::from(load_env_required("ACL4SSR_CONFIG_PATH")?);
+        let cache_dir = PathBuf::from(load_env_default("CACHE_DIR", "/app/cache"));
         let port = load_env_default("RESOLVER_PORT", "8088")
             .parse::<u16>()
             .context("failed to parse RESOLVER_PORT")?;
-        let rules_url = load_env_default(
-            "RULES_URL",
-            "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_Full.ini",
-        );
 
         let vps_configs = load_vps_configs(&vps_configs_dir)?;
 
@@ -38,9 +35,9 @@ impl ResolverConfig {
             airport_url,
             origin_config_path,
             access_token,
-            subconverter_host,
             port,
-            rules_url,
+            cache_dir,
+            acl4ssr_config_path,
             vps_configs,
         })
     }
@@ -54,7 +51,7 @@ impl ResolverConfig {
         self.vps_configs.iter().map(VpsConfig::proxy)
     }
 
-    /// Returns a list of custom rules that should be appended to the generated config.
+    /// Returns local rules that must be evaluated before ACL4SSR rules.
     ///
     /// ["IP-CIDR,1.1.1.0/24,DIRECT,no-resolve", "IP-CIDR,8.8.8.8/32,DIRECT,no-resolve"]
     pub fn custom_rules(&self) -> Box<[String]> {
@@ -287,9 +284,9 @@ mod tests {
             airport_url: String::new(),
             origin_config_path: String::new(),
             access_token: String::new(),
-            subconverter_host: String::new(),
             port: 0,
-            rules_url: String::new(),
+            cache_dir: PathBuf::new(),
+            acl4ssr_config_path: PathBuf::new(),
             vps_configs,
         };
 
