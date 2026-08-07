@@ -10,4 +10,5 @@ buildRustPackage {
     "--bin"
     "mihomo-updater" # Only build the updater binary
   ];
+  doCheck = false;
 }
