@@ -21,7 +21,7 @@ pub fn generate_ics(lessons: &[Lesson], config: &Config) -> Result<String> {
 
     let mut calendar = Calendar::new();
     calendar.name("课程表");
-    calendar.timezone(&config.timezone);
+    calendar.timezone(config.timezone.clone());
 
     let dt_stamp = Utc::now();
     let mut event_count = 0usize;
@@ -179,8 +179,7 @@ mod tests {
     #[test]
     fn generate_calendar_contains_course_and_week_reminders() {
         let config = Config {
-            course_election_bin: "/tmp/unused".into(),
-            html_file: None,
+            html_path: "/tmp/unused.html".into(),
             semester_start: "2026-03-09".to_owned(),
             timezone: "Asia/Shanghai".to_owned(),
             alarm_minutes_before: 20,
@@ -213,8 +212,7 @@ mod tests {
     #[test]
     fn generate_calendar_preserves_conflicting_courses() {
         let config = Config {
-            course_election_bin: "/tmp/unused".into(),
-            html_file: None,
+            html_path: "/tmp/unused.html".into(),
             semester_start: "2026-03-09".to_owned(),
             timezone: "Asia/Shanghai".to_owned(),
             alarm_minutes_before: 20,

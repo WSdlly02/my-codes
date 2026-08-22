@@ -10,21 +10,11 @@ use clap::{ArgAction, Parser};
     about = "将课程表 HTML 转换为 ICS 日历文件"
 )]
 pub struct Config {
-    #[arg(
-        long,
-        default_value = "/home/wsdlly02/Documents/my-codes/SOPs/course-election/course-election",
-        help = "course-election 可执行文件路径"
-    )]
-    pub course_election_bin: PathBuf,
+    #[arg(value_name = "HTML_PATH", help = "课程表 HTML 文件路径")]
+    pub html_path: PathBuf,
 
-    #[arg(long, help = "直接读取本地 HTML 文件，跳过外部命令查询")]
-    pub html_file: Option<PathBuf>,
-
-    #[arg(
-        long,
-        default_value = "2026-03-09",
-        help = "学期第一天，格式 YYYY-MM-DD"
-    )]
+    /// 必须显式指定学期第一天，否则无法计算教学周
+    #[arg(long, help = "学期第一天，格式 YYYY-MM-DD")]
     pub semester_start: String,
 
     #[arg(long, default_value = "Asia/Shanghai", help = "IANA 时区名称")]
