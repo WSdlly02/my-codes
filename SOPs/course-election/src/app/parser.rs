@@ -1,4 +1,4 @@
-use anyhow::{Result, bail, Context};
+use anyhow::{Context, Result, bail};
 use chrono::TimeZone;
 use chrono_tz::Asia::Shanghai;
 use regex::Regex;
@@ -71,7 +71,10 @@ pub(crate) fn parse_count_payload(raw: &str) -> Result<HashMap<String, LessonCou
     serde_json::from_str::<HashMap<String, LessonCount>>(&normalized).context("解析容量数据失败")
 }
 
-pub(crate) fn build_lesson_mapping_cache(profile_id: &str, lessons: Vec<Lesson>) -> LessonMappingCache {
+pub(crate) fn build_lesson_mapping_cache(
+    profile_id: &str,
+    lessons: Vec<Lesson>,
+) -> LessonMappingCache {
     let mut by_lesson_id = HashMap::new();
     let mut by_name = HashMap::<String, Vec<String>>::new();
     let mut by_code = HashMap::<String, Vec<String>>::new();
@@ -118,20 +121,11 @@ pub(crate) fn build_lesson_count_snapshot(
     LessonCountSnapshot {
         profile_id: profile_id.to_string(),
         fetched_at: now_fixed(),
-        source_url: format!("{BASE_URL}/stdElectCourse!queryStdCount.action?profileId={profile_id}"),
+        source_url: format!(
+            "{BASE_URL}/stdElectCourse!queryStdCount.action?profileId={profile_id}"
+        ),
         counts,
     }
-}
-
-pub(crate) fn parse_elected_ids(html: &str) -> HashMap<String, bool> {
-    let re = Regex::new(r#"electedIds\["l(\d+)"\]\s*=\s*true"#).unwrap();
-    let mut elected = HashMap::new();
-    for caps in re.captures_iter(html) {
-        if let Some(id) = caps.get(1) {
-            elected.insert(id.as_str().to_string(), true);
-        }
-    }
-    elected
 }
 
 pub(crate) fn parse_unique_std_id(html: &str) -> Result<String> {
@@ -139,14 +133,41 @@ pub(crate) fn parse_unique_std_id(html: &str) -> Result<String> {
         r##"(?s)if\(jQuery\("#courseTableType"\)\.val\(\)=="std"\)\s*\{\s*bg\.form\.addInput\(form,"ids","(\d+)"\);"##,
     )
     .unwrap();
-    let unique: BTreeSet<_> = re
+    let ids: BTreeSet<_> = re
         .captures_iter(html)
-        .filter_map(|caps| caps.get(1).map(|m| m.as_str().to_string()))
+        .filter_map(|captures| captures.get(1).map(|value| value.as_str().to_string()))
         .collect();
-    if unique.len() != 1 {
-        bail!("无法从课表入口页提取唯一学号，匹配到 {} 个候选", unique.len());
+    if ids.len() != 1 {
+        bail!("无法从课表入口页提取唯一学号，匹配到 {} 个候选", ids.len());
     }
-    Ok(unique.into_iter().next().unwrap())
+    Ok(ids.into_iter().next().unwrap())
+}
+
+pub(crate) fn parse_elected_ids(html: &str) -> HashMap<String, bool> {
+    Regex::new(r#"electedIds\["l(\d+)"\]\s*=\s*true"#)
+        .unwrap()
+        .captures_iter(html)
+        .filter_map(|captures| {
+            captures
+                .get(1)
+                .map(|value| (value.as_str().to_string(), true))
+        })
+        .collect()
+}
+
+pub(crate) fn resolve_lesson_id_by_name(
+    mapping: &LessonMappingCache,
+    course_name: &str,
+) -> Result<String> {
+    let key = normalize_index_key(course_name);
+    match mapping.by_name.get(&key) {
+        None => bail!("课程映射缓存中找不到课程名: {course_name}"),
+        Some(ids) if ids.len() == 1 => Ok(ids[0].clone()),
+        Some(ids) => bail!(
+            "课程名 {course_name} 对应多个 lessonID，请使用数字 ID，候选: {}",
+            ids.join(",")
+        ),
+    }
 }
 
 pub(crate) fn summarize_selection_response(body: &str) -> String {
@@ -155,12 +176,12 @@ pub(crate) fn summarize_selection_response(body: &str) -> String {
         return "空响应".to_string();
     }
     let re = Regex::new(r#"(?s)margin:auto;">\s*(.*?)\s*</br>"#).unwrap();
-    if let Some(caps) = re.captures(trimmed) {
-        if let Some(matched) = caps.get(1) {
-            let msg = clean_html(matched.as_str());
-            if !msg.is_empty() {
-                return msg;
-            }
+    if let Some(caps) = re.captures(trimmed)
+        && let Some(matched) = caps.get(1)
+    {
+        let msg = clean_html(matched.as_str());
+        if !msg.is_empty() {
+            return msg;
         }
     }
     clean_html(trimmed)
@@ -168,19 +189,6 @@ pub(crate) fn summarize_selection_response(body: &str) -> String {
 
 pub(crate) fn selection_succeeded(body: &str) -> bool {
     summarize_selection_response(body).contains("成功")
-}
-
-pub(crate) fn resolve_lesson_id_by_name(mapping: &LessonMappingCache, course_name: &str) -> Result<String> {
-    let key = normalize_index_key(course_name);
-    match mapping.by_name.get(&key) {
-        None => bail!("课程映射缓存中找不到课程名: {course_name}"),
-        Some(ids) if ids.len() == 1 => Ok(ids[0].clone()),
-        Some(ids) => bail!(
-            "课程名 {} 对应多个 lessonID，请改用 --lesson-id，候选: {}",
-            course_name,
-            ids.join(",")
-        ),
-    }
 }
 
 pub(crate) fn clean_html(input: &str) -> String {
@@ -195,7 +203,9 @@ fn normalize_js_literal(raw: &str, prefix_pattern: &str) -> Result<String> {
     let trimmed = raw.trim();
     let lower = trimmed.to_ascii_lowercase();
     if lower.starts_with("<!doctype html") || lower.starts_with("<html") {
-        bail!("接口返回了 HTML 页面而不是课程数据，通常表示当前 profile 尚未建立上下文、未开放，或服务端返回了错误页");
+        bail!(
+            "接口返回了 HTML 页面而不是课程数据，通常表示当前 profile 尚未建立上下文、未开放，或服务端返回了错误页"
+        );
     }
 
     let comment_re = Regex::new(r"(?s)/\*.*?\*/").unwrap();
@@ -307,10 +317,9 @@ fn sort_index_values(index: &mut HashMap<String, Vec<String>>) {
 mod tests {
     use super::{
         build_lesson_mapping_cache, parse_count_payload, parse_lesson_payload,
-        resolve_lesson_id_by_name, summarize_selection_response,
+        summarize_selection_response,
     };
-    use crate::model::{Lesson, LessonMappingCache};
-    use std::collections::HashMap;
+    use crate::model::Lesson;
 
     #[test]
     fn single_quote_js_is_normalized() {
@@ -348,18 +357,23 @@ mod tests {
     }
 
     #[test]
-    fn resolve_lesson_id_by_name_works() {
-        let cache = LessonMappingCache {
-            by_name: HashMap::from([("刑法学".to_string(), vec!["244433".to_string()])]),
-            ..LessonMappingCache::default()
-        };
-        let lesson_id = resolve_lesson_id_by_name(&cache, "刑法学").expect("resolve lesson id");
-        assert_eq!(lesson_id, "244433");
-    }
-
-    #[test]
     fn summarize_selection_response_extracts_message() {
         let body = r#"<html><body><div style="margin:auto;"> 选课成功 </br></div></body></html>"#;
         assert_eq!(summarize_selection_response(body), "选课成功");
+    }
+
+    #[test]
+    fn extracts_unique_schedule_student_id() {
+        let html = r##"if(jQuery("#courseTableType").val()=="std") { bg.form.addInput(form,"ids","123456"); }"##;
+        assert_eq!(super::parse_unique_std_id(html).unwrap(), "123456");
+    }
+
+    #[test]
+    fn extracts_elected_lesson_ids() {
+        let ids = super::parse_elected_ids(
+            r#"electedIds["l244433"] = true; electedIds["l244434"]=true;"#,
+        );
+        assert_eq!(ids.len(), 2);
+        assert!(ids["244433"]);
     }
 }

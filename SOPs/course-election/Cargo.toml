@@ -1,6 +1,6 @@
 [package]
 name = "course-election"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 
 [[bin]]
@@ -9,28 +9,28 @@ path = "src/bin/course-election.rs"
 
 [dependencies]
 anyhow = "1.0"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = { version = "0.10", features = ["serde"] }
-clap = { version = "4.6", features = ["derive"] }
 glob = "0.3"
-headless_chrome = "1.0.22"
-regex = "1.12"
+regex = "1.13"
 reqwest = {
   version = "0.13",
   default-features = false,
   features = [
-    "blocking",
     "charset",
     "cookies",
+    "form",
     "gzip",
     "http2",
     "json",
     "rustls",
   ]
 }
+rpassword = "7.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tokio = { version = "1.53", features = ["io-std", "io-util", "macros", "rt-multi-thread", "time"] }
 
 [profile.release]
 opt-level = 3

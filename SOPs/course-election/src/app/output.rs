@@ -25,7 +25,8 @@ pub(crate) fn build_lesson_display_entries(
         if !match_lesson_filter(lesson, filter) {
             continue;
         }
-        let count = counts.and_then(|snapshot| snapshot.counts.get(&lesson.id.to_string()).cloned());
+        let count =
+            counts.and_then(|snapshot| snapshot.counts.get(&lesson.id.to_string()).cloned());
         entries.push(LessonDisplayEntry {
             lesson: lesson.clone(),
             count,
@@ -99,20 +100,20 @@ pub(crate) fn format_week_state(week_state: &str) -> String {
 }
 
 fn match_lesson_filter(lesson: &Lesson, filter: &LessonQueryFilter) -> bool {
-    if let Some(name) = filter.name.as_ref() {
-        if !lesson.name.to_lowercase().contains(&name.to_lowercase()) {
-            return false;
-        }
+    if let Some(name) = filter.name.as_ref()
+        && !lesson.name.to_lowercase().contains(&name.to_lowercase())
+    {
+        return false;
     }
-    if let Some(lesson_id) = filter.lesson_id.as_ref() {
-        if lesson.id.to_string() != *lesson_id {
-            return false;
-        }
+    if let Some(lesson_id) = filter.lesson_id.as_ref()
+        && lesson.id.to_string() != *lesson_id
+    {
+        return false;
     }
-    if let Some(code) = filter.code.as_ref() {
-        if !lesson.code.eq_ignore_ascii_case(code) {
-            return false;
-        }
+    if let Some(code) = filter.code.as_ref()
+        && !lesson.code.eq_ignore_ascii_case(code)
+    {
+        return false;
     }
     if filter.selected_only
         && !filter

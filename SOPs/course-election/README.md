@@ -1,311 +1,139 @@
-# course-election 使用文档
+# course-election
 
-本文以 Rust 版本 `course-election` 为准。
+上海海事大学教务系统选课 REPL。程序使用 Tokio 与长期存活的 `reqwest::Client`，通过纯 HTTP CAS 登录，不依赖浏览器。
 
-## 功能概览
-
-`course-election` 是上海海事大学教务系统选课 CLI。它通过本地浏览器获取登录 Cookie，再用 HTTP 接口完成通道查询、课程查询、容量刷新、选课和退课。
-
-主要能力：
-
-- 浏览器登录预热，并缓存 Cookie。
-- 查询选课通道和 `profileID`。
-- 按课程名、课程 ID、课程号查询课程详情。
-- 查询当前已选课程。
-- 查询课表 HTML。
-- 按课程 ID 或课程名执行选课、退课。
-- 自动维护运行中更新的 Cookie，并写回 `cache/cookies.json`。
-
-## 环境要求
-
-- Rust toolchain。
-- 本机可启动 Chrome/Chromium。
-- 可访问 `https://jwxt.shmtu.edu.cn/shmtu`。
-- 可选：如果使用 `--autofill-captcha`，需要本地 Ollama 服务：
-  - 地址：`http://localhost:11434/api/generate`
-  - 默认模型：`qwen3-vl:8b-instruct`
-
-## 构建
-
-开发运行：
+## 运行
 
 ```bash
-./course-election <command> [options]
+cargo run --release
 ```
 
-发布构建：
-
-```bash
-cargo build --release
-./target/release/course-election <command> [options]
-```
-
-如果当前目录已有编译产物，也可以直接运行：
-
-```bash
-./course-election <command> [options]
-```
-
-## 文件与缓存
-
-程序会使用以下本地状态:
-
-- `cache/cookies.json`：登录 Cookie。
-- `cache/channels.json`：选课通道缓存。
-- `cache/mapping_<profileID>.json`：课程映射缓存。
-- `cache/counts_<profileID>.json`：课程容量缓存。
-- `chrome-profile/`：Chrome 用户数据目录，用于复用浏览器登录状态。
-
-运行中服务端返回的新 Cookie 会自动写回 `cache/cookies.json`。查询课表时写入的 `semester.id` 也会通过同一逻辑持久化。
-
-## 推荐流程
-
-### 1. 登录预热
-
-手动登录：
-
-```bash
-./course-election warmup
-```
-
-程序会打开浏览器。请在浏览器中完成登录，程序检测到登录成功后会保存 Cookie，并尝试缓存选课通道。
-
-自动填充账号密码：
-
-```bash
-./course-election warmup --username <学号> --password <密码>
-```
-
-这只会自动填充账号密码，验证码仍需手动填写并提交。
-
-自动识别验证码并提交：
-
-```bash
-./course-election warmup --username <学号> --password <密码> --autofill-captcha
-```
-
-只有同时提供 `--username`、`--password` 和 `--autofill-captcha` 时，程序才会自动提交登录表单。验证码 OCR 失败时不会中断登录流程；程序会打印警告，并等待你手动填写验证码、提交登录表单。
-
-登录等待超时时间为 120 秒。
-
-注意：`warmup` 会允许通道缓存失败。也就是说，只要 Cookie 已保存，即使通道解析失败，命令也会以警告形式结束。之后仍可通过已知 `profileID` 查询或操作。
-
-### 2. 查看状态
-
-```bash
-./course-election status
-```
-
-输出内容包括：
-
-- Cookie 文件是否存在。
-- Cookie 过期时间。
-- 当前会话是否有效。
-- 通道缓存是否存在。
-- 各个 mapping/counts 缓存状态。
-
-### 3. 查询选课通道
-
-```bash
-./course-election query
-```
-
-输出示例：
+启动后直接进入唯一交互入口：
 
 ```text
-[1] 第一轮选课 | profile=2936 | 已开放 | ...
+course-election>
 ```
 
-后续查询、选课和退课都需要使用 `profileID`。
+## 登录
 
-### 4. 查询课程
-
-按通道查询全部课程：
-
-```bash
-./course-election query --profile 2936
+```text
+course-election> login 202410000000
+密码: ********
 ```
 
-按课程名关键词查询：
+密码不会显示或写入文件。程序会：
 
-```bash
-./course-election query --profile 2936 --name 海事法
+1. 请求教务系统并进入 CAS；
+2. 解析当前页面的 `execution`；
+3. 请求带 `captchaToken` 的验证码；
+4. 使用本地 Ollama 识别算术验证码；
+5. 提交 CAS 表单并受限跟随 ticket 回调；
+6. 验证教务系统 Session 并保存 JWXT Cookie。
+
+验证码错误最多自动刷新三次；密码错误立即停止。默认 OCR 服务为：
+
+```text
+http://10.144.144.64:11434/api/generate
+model=qwen3-vl:8b-instruct
 ```
 
-按课程 ID 查询：
+## 常用流程
 
-```bash
-./course-election query --profile 2936 --lesson-id 242153
+```text
+course-election> channels
+course-election> profile 2936
+course-election> refresh
+course-election> find 海事法
+course-election> target 242153
 ```
 
-按课程号查询：
+- `channels`：在线刷新选课轮次。
+- `profile <id>`：选择轮次；切换轮次会清除当前 target。
+- `refresh`：获取课程数据并刷新容量。
+- `find [--selected] [--id ID|--code CODE|名称]`：查询全部课程或按名称、ID、课程号、已选状态过滤。
+- `target <lesson-id|完整课程名>`：固定热路径目标；完整课程名必须唯一匹配。
+- `status`：查看登录、profile、target 和缓存状态。
 
-```bash
-./course-election query --profile 2936 --code FX120230
+## 连接预热与选课
+
+手动待命：
+
+```text
+course-election> arm
+已预热；按 Enter 或输入 fire 触发，输入 cancel 取消
 ```
 
-课程查询会优先使用本地 `mapping` 缓存；如果缓存不存在且 Cookie 有效，会在线拉取并缓存课程映射。容量数据会尽量在线刷新；如果刷新失败但本地存在旧容量缓存，会使用本地副本并打印警告。
+待命期间每 10 秒保活一次。触发时使用本次 `defaultPage` 响应头的 `Date` 生成 `elecSessionTime`，随后立即通过第二条预热连接 POST。
 
-### 5. 查询已选课程
+定时触发使用 RFC3339 时间：
 
-```bash
-./course-election query --profile 2936 --selected-lessons
+```text
+course-election> arm 2026-09-01T12:00:00+08:00
 ```
 
-也可以叠加筛选条件：
+程序在 T-5 秒执行双连接预热，并在目标时间发起一次选课。
 
-```bash
-./course-election query --profile 2936 --selected-lessons --name 海事法
+直接选课及重试：
+
+```text
+course-election> fire
+course-election> fire 20 500
+course-election> fire 0 500
 ```
 
-`--selected-lessons` 必须配合 `--profile` 使用，并且需要当前 Cookie 有效。
+参数依次为尝试次数和间隔毫秒；次数 `0` 表示无限。每次尝试都会重新执行：
 
-### 6. 查询课表 HTML
-
-```bash
-./course-election query --class-schedule
+```text
+fresh defaultPage → Date → elecSessionTime → batchOperator
 ```
 
-该命令会请求课表入口页，提取唯一学号，再请求课表 HTML 并直接打印。它需要当前 Cookie 有效。
+退课：
 
-课表查询会自动按当前日期推导 `semester.id`。已知规则为：2025 学年秋季学期为 `395`，同一学年春季学期为秋季 `+1`，下一个同季学期为 `+20`。例如 2026-02-01 至 2026-08-31 推导为 `396`，2026-09-01 至 2027-01-31 推导为 `415`。
-
-也可以手动指定：
-
-```bash
-./course-election query --class-schedule --semester-id 415
+```text
+course-election> drop
+course-election> drop 5 1000
 ```
 
-或使用环境变量：
+## 导出课程表
 
-```bash
-COURSE_ELECTION_SEMESTER_ID=415 ./course-election query --class-schedule
+```text
+course-election> export-schedule
+course-election> export-schedule 415
+course-election> export-schedule 415 my-schedule.html
 ```
 
-### 7. 选课
+未指定学期时，程序以 `2025` 学年秋季学期 `395` 为基准自动滚动：每学年增加 `20`，春季学期为同学年秋季 `+1`。也可通过 `COURSE_ELECTION_SEMESTER_ID` 校准默认值。
 
-按课程 ID 选课：
+默认输出为 `class-schedule-<semester-id>.html`。导出复用当前登录 Session，不会启动浏览器或执行第二套登录。
 
-```bash
-./course-election select --profile 2936 --lesson-id 242153
+## 本地状态
+
+```text
+cache/cookies.json
+cache/channels.json
+cache/mapping_<profileID>.json
+cache/counts_<profileID>.json
 ```
 
-按课程名选课：
+Cookie 只保存 JWXT 域，并在网络操作结束后写入；密码、CAS TGC 和 ticket 不会持久化。
 
-```bash
-./course-election select --profile 2936 --name 海事法
+`clear` 清除登录 Cookie；`clear all` 同时清除课程映射和容量缓存。
+
+## REPL 命令
+
+```text
+login <用户名>
+status
+channels
+profile <id>
+refresh
+find [--selected] [--id ID|--code CODE|名称]
+target <lesson-id|完整课程名>
+export-schedule [semester-id] [output.html]
+arm [RFC3339时间]
+fire [次数] [间隔毫秒]
+drop [次数] [间隔毫秒]
+clear [all]
+cancel
+quit
 ```
-
-按课程名选课依赖本地 `mapping_<profileID>.json`。如果同名课程对应多个 `lessonID`，程序会拒绝执行，并提示改用 `--lesson-id`。
-
-重试选课：
-
-```bash
-./course-election select --profile 2936 --lesson-id 242153 --retry 20 --interval 500ms
-```
-
-无限重试：
-
-```bash
-./course-election select --profile 2936 --lesson-id 242153 --retry 0 --interval 500ms
-```
-
-`--interval` 只支持 `ms` 或 `s`，例如 `500ms`、`1s`。
-
-如果服务器响应很慢导致 Cookie 有效性预检误判，可以紧急跳过预检：
-
-```bash
-./course-election select --profile 2936 --lesson-id 242153 --skip-session-check
-```
-
-该参数只跳过发送选课/退课请求前的预检。真实请求仍可能被服务器拒绝，程序会继续打印服务端响应摘要或请求错误。
-
-选课实现流程：
-
-1. 请求 `defaultPage`。
-2. 从响应头 `Date` 解析服务器时间。
-3. 将服务器时间转换为 `elecSessionTime`。
-4. 立即 POST `batchOperator`。
-5. 响应摘要包含“成功”时停止重试。
-
-### 8. 退课
-
-按课程 ID 退课：
-
-```bash
-./course-election drop --profile 2936 --lesson-id 242153
-```
-
-按课程名退课：
-
-```bash
-./course-election drop --profile 2936 --name 海事法
-```
-
-退课也支持 `--retry` 和 `--interval`：
-
-```bash
-./course-election drop --profile 2936 --lesson-id 242153 --retry 5 --interval 1s
-```
-
-退课请求中 `elecSessionTime` 固定为 `undefined`。
-
-### 9. 清理状态
-
-只清除登录 Cookie：
-
-```bash
-./course-election flush-state
-```
-
-同时清除课程映射和容量缓存：
-
-```bash
-./course-election flush-state --all
-```
-
-`flush-state --all` 会删除 `mapping_*.json` 和 `counts_*.json`，但保留 `channels.json`。
-
-## 常用命令速查
-
-```bash
-# 登录并缓存 Cookie
-./course-election warmup
-
-# 检查状态
-./course-election status
-
-# 查看通道
-./course-election query
-
-# 查询课程
-./course-election query --profile 2936 --name 海事法
-./course-election query --profile 2936 --code FX120230
-./course-election query --profile 2936 --lesson-id 242153
-
-# 查询已选课程
-./course-election query --profile 2936 --selected-lessons
-
-# 查询课表 HTML
-./course-election query --class-schedule
-./course-election query --class-schedule --semester-id 415
-
-# 选课
-./course-election select --profile 2936 --lesson-id 242153 --retry 0 --interval 500ms
-./course-election select --profile 2936 --lesson-id 242153 --skip-session-check
-
-# 退课
-./course-election drop --profile 2936 --lesson-id 242153
-
-# 清理登录状态
-./course-election flush-state
-```
-
-## 注意事项
-
-- `profileID` 是选课通道 ID，不是课程 ID。
-- 对用户可见的“课程 ID”对应服务端 lesson ID，即课程数据中的 `id` 字段。
-- 如果通道未开放，服务端可能返回 HTML 错误页或重定向，程序会提示登录态或通道状态可能无效。
-- 课程容量数据实时性依赖教务系统接口。如果在线刷新失败，程序可能使用本地旧缓存并给出警告。
-- `--retry 0` 表示无限重试，使用前应确认课程 ID 和通道 ID 正确。
-- 自动验证码识别依赖本地 OCR 模型，不能保证识别正确。识别失败时可以手动填写；识别错误并自动提交后，程序会等待登录成功，最终可能超时。

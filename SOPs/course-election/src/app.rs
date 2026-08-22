@@ -1,12 +1,11 @@
-mod browser;
 mod cache;
-mod cli;
-mod commands;
 mod http;
+mod login;
 mod output;
 mod parser;
+mod repl;
 mod support;
 
-pub fn run() -> anyhow::Result<()> {
-    commands::run()
+pub async fn run() -> anyhow::Result<()> {
+    repl::run().await
 }

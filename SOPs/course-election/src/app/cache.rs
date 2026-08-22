@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use glob::glob;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use crate::app::support::{
@@ -17,17 +18,20 @@ pub(crate) fn load_saved_cookies() -> Result<SavedCookies> {
 }
 
 pub(crate) fn save_cookies(cookies: &[SavedCookie]) -> Result<()> {
-    save_json(&cookie_file_path(), &SavedCookies {
-        cookies: cookies.to_vec(),
-    })
-}
-
-pub(crate) fn load_channel_cache() -> Result<ChannelCache> {
-    load_json(&channels_cache_path())
+    save_json(
+        &cookie_file_path(),
+        &SavedCookies {
+            cookies: cookies.to_vec(),
+        },
+    )
 }
 
 pub(crate) fn save_channel_cache(cache: &ChannelCache) -> Result<()> {
     save_json(&channels_cache_path(), cache)
+}
+
+pub(crate) fn load_channel_cache() -> Result<ChannelCache> {
+    load_json(&channels_cache_path())
 }
 
 pub(crate) fn load_mapping_cache(profile_id: &str) -> Result<LessonMappingCache> {
@@ -46,23 +50,14 @@ pub(crate) fn save_count_snapshot(profile_id: &str, snapshot: &LessonCountSnapsh
     save_json(&counts_cache_path(profile_id), snapshot)
 }
 
-pub(crate) fn flush_login_state() -> Result<()> {
-    match fs::remove_file(cookie_file_path()) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).context("删除 cookies 失败"),
-    }
+pub(crate) fn clear_login_state() -> Result<()> {
+    remove_if_present(&cookie_file_path())
 }
 
-pub(crate) fn flush_derived_caches() -> Result<()> {
+pub(crate) fn clear_derived_caches() -> Result<()> {
     for pattern in ["cache/mapping_*.json", "cache/counts_*.json"] {
         for entry in glob(pattern).context("读取缓存文件列表失败")? {
-            let path = entry.context("解析缓存路径失败")?;
-            match fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err).with_context(|| format!("删除缓存失败: {}", path.display())),
-            }
+            remove_if_present(&entry.context("解析缓存路径失败")?)?;
         }
     }
     Ok(())
@@ -116,16 +111,54 @@ where
     serde_json::from_str(&text).with_context(|| format!("解析失败: {}", path.display()))
 }
 
+fn remove_if_present(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("删除失败: {}", path.display())),
+    }
+}
+
 fn save_json<T>(path: &Path, value: &T) -> Result<()>
 where
     T: serde::Serialize,
 {
     ensure_cache_dir()?;
     let body = serde_json::to_string_pretty(value).context("序列化 JSON 失败")?;
-    fs::write(path, body).with_context(|| format!("写入失败: {}", path.display()))
+    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temporary)
+        .with_context(|| format!("创建临时文件失败: {}", temporary.display()))?;
+    file.write_all(body.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    if let Err(error) = fs::rename(&temporary, path) {
+        #[cfg(windows)]
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            // ponytail: Windows lacks atomic replace here; add a tiny atomic-write crate if crashes prove relevant.
+            fs::remove_file(path)?;
+            return fs::rename(&temporary, path)
+                .with_context(|| format!("替换失败: {}", path.display()));
+        }
+        return Err(error).with_context(|| format!("替换失败: {}", path.display()));
+    }
+    Ok(())
 }
 
 fn profile_id_from_path(path: &Path, prefix: &str) -> String {
-    let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-    file_name.strip_prefix(prefix).unwrap_or(file_name).to_string()
+    let file_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    file_name
+        .strip_prefix(prefix)
+        .unwrap_or(file_name)
+        .to_string()
 }

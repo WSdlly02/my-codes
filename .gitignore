@@ -23,6 +23,7 @@ result/
 target/
 .direnv/
 .venv/
+playgrounds/
 
 # 忽略 hackathons 目录下的所有内容
 /hackathons/
