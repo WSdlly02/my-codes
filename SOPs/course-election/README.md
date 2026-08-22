@@ -32,6 +32,8 @@ course-election> login 202410000000
 
 验证码错误最多自动刷新三次；密码错误立即停止。默认 OCR 服务为：
 
+每次识别都会把验证码以权限 `0600` 保存到系统临时目录，并打印图片路径与最终整数结果；CAS 异常响应也会保存为临时 HTML 供排查。
+
 ```text
 http://10.144.144.64:11434/api/generate
 model=qwen3-vl:8b-instruct
@@ -137,3 +139,14 @@ clear [all]
 cancel
 quit
 ```
+
+## REPL 驱动工具（自动化操作）
+
+`repl-driver/` 提供一套基于 PTY + Unix socket 的驱动工具，可让本程序在后台常驻，
+通过短命令自动化操作（适合抢课脚本、AI 助手驱动等）：
+
+- `repl-driver/pty_driver.py`：把 REPL 挂到伪终端并暴露 Unix socket（常驻进程）
+- `repl-driver/pty_client.py`：向会话发送命令并收取输出（支持等待提示符）
+- `repl-driver/repl_login.py`：用 `.env` 的 USERNAME/PASSWORD 安全登录（密码不落盘、不回显）
+- `repl-driver/start-repl.sh` / `stop-repl.sh`：一键启停
+- 详细说明见 `repl-driver/repl.md`
