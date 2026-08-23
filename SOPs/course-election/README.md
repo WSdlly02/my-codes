@@ -14,6 +14,8 @@ cargo run --release
 course-election>
 ```
 
+当前会话支持 `↑/↓` 浏览历史命令、左右/Home/End 编辑、`Ctrl-C` 取消输入和 `Ctrl-D` 退出；历史不会写入磁盘。
+
 ## 登录
 
 ```text

@@ -1,10 +1,11 @@
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, FixedOffset, Utc};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
 use std::collections::HashMap;
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader, Lines, Stdin};
 
 use crate::app::cache::{
     clear_derived_caches, clear_login_state, list_count_cache_statuses,
@@ -29,6 +30,9 @@ struct State {
     lesson_id: Option<String>,
 }
 
+const PROMPT: &str = "course-election> ";
+const ARM_PROMPT: &str = "arm> ";
+
 pub(crate) async fn run() -> Result<()> {
     let session = load_saved_cookies()
         .ok()
@@ -39,19 +43,30 @@ pub(crate) async fn run() -> Result<()> {
         profile_id: None,
         lesson_id: None,
     };
-    let mut lines = BufReader::new(tokio::io::stdin()).lines();
     print_help();
+    let (mut readline, mut writer) = Readline::new(PROMPT.to_string())?;
+    readline.should_print_line_on(true, false);
 
     loop {
-        print!("course-election> ");
-        io::stdout().flush()?;
-        let Some(line) = lines.next_line().await? else {
-            break;
+        let line = match readline.readline().await? {
+            ReadlineEvent::Line(line) => {
+                suspend_readline(&mut readline)?;
+                line
+            }
+            ReadlineEvent::Interrupted => {
+                suspend_readline(&mut readline)?;
+                println!("^C");
+                resume_readline(&mut readline, PROMPT)?;
+                continue;
+            }
+            ReadlineEvent::Eof => break,
         };
         let line = line.trim();
         if line.is_empty() {
+            resume_readline(&mut readline, PROMPT)?;
             continue;
         }
+        readline.add_history_entry(line.to_string());
         let (command, argument) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
         let result = match command {
             "help" => {
@@ -66,18 +81,33 @@ pub(crate) async fn run() -> Result<()> {
             "find" => run_find(&state, argument).await,
             "target" => set_target(&mut state, argument),
             "export-schedule" => run_export_schedule(&state, argument).await,
-            "arm" => run_arm(&state, argument, &mut lines).await,
+            "arm" => run_arm(&state, argument, &mut readline, &mut writer).await,
             "fire" => run_fire_command(&state, argument).await,
             "drop" => run_drop_command(&state, argument).await,
             "clear" => run_clear(&mut state, argument),
             "quit" | "exit" => break,
             _ => Err(anyhow!("未知命令，输入 help 查看用法")),
         };
+        disable_raw_mode()?;
         if let Err(error) = result {
             eprintln!("错误：{error:#}");
         }
+        resume_readline(&mut readline, PROMPT)?;
     }
+    readline.flush()?;
     state.session.persist_cookies()?;
+    Ok(())
+}
+
+fn suspend_readline(readline: &mut Readline) -> Result<()> {
+    readline.update_prompt("")?;
+    disable_raw_mode()?;
+    Ok(())
+}
+
+fn resume_readline(readline: &mut Readline, prompt: &str) -> Result<()> {
+    enable_raw_mode()?;
+    readline.update_prompt(prompt)?;
     Ok(())
 }
 
@@ -245,29 +275,49 @@ fn set_target(state: &mut State, argument: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_arm(state: &State, argument: &str, lines: &mut Lines<BufReader<Stdin>>) -> Result<()> {
+async fn run_arm(
+    state: &State,
+    argument: &str,
+    readline: &mut Readline,
+    writer: &mut SharedWriter,
+) -> Result<()> {
     let profile = require_profile(state)?;
     require_target(state)?;
     if argument.trim().is_empty() {
         prewarm(&state.session, profile).await?;
         println!("已预热；按 Enter 或输入 fire 触发，输入 cancel 取消");
+        resume_readline(readline, ARM_PROMPT)?;
         let mut keepalive = tokio::time::interval(Duration::from_secs(10));
         keepalive.tick().await;
         loop {
             tokio::select! {
-                line = lines.next_line() => {
-                    let Some(line) = line? else { return Ok(()) };
-                    let line = line.trim();
-                    if line == "cancel" {
-                        println!("已取消");
-                        return Ok(());
+                event = readline.readline() => {
+                    match event? {
+                        ReadlineEvent::Line(line) => {
+                            let line = line.trim();
+                            suspend_readline(readline)?;
+                            if line == "cancel" {
+                                println!("已取消");
+                                return Ok(());
+                            }
+                            readline.add_history_entry(line.to_string());
+                            let arguments = line.strip_prefix("fire").unwrap_or(line).trim();
+                            return run_fire_command(state, arguments).await;
+                        }
+                        ReadlineEvent::Interrupted => {
+                            suspend_readline(readline)?;
+                            println!("已取消");
+                            return Ok(());
+                        }
+                        ReadlineEvent::Eof => {
+                            disable_raw_mode()?;
+                            return Ok(());
+                        }
                     }
-                    let arguments = line.strip_prefix("fire").unwrap_or(line).trim();
-                    return run_fire_command(state, arguments).await;
                 }
                 _ = keepalive.tick() => {
                     prewarm(&state.session, profile).await?;
-                    println!("连接已保活");
+                    writeln!(writer, "连接已保活")?;
                 }
             }
         }
@@ -278,12 +328,12 @@ async fn run_arm(state: &State, argument: &str, lines: &mut Lines<BufReader<Stdi
         bail!("arm 时间必须晚于当前时间");
     }
     let prewarm_at = target - chrono::Duration::seconds(5);
-    if wait_until_or_cancel(prewarm_at, lines).await? {
+    if wait_until_or_cancel(prewarm_at, readline).await? {
         return Ok(());
     }
     prewarm(&state.session, profile).await?;
     println!("T-5s 预热完成");
-    if wait_until_or_cancel(target, lines).await? {
+    if wait_until_or_cancel(target, readline).await? {
         return Ok(());
     }
     run_action(state, 1, Duration::from_millis(500), true).await
@@ -291,21 +341,40 @@ async fn run_arm(state: &State, argument: &str, lines: &mut Lines<BufReader<Stdi
 
 async fn wait_until_or_cancel(
     target: DateTime<FixedOffset>,
-    lines: &mut Lines<BufReader<Stdin>>,
+    readline: &mut Readline,
 ) -> Result<bool> {
     let wait = target.signed_duration_since(Utc::now());
     let Ok(wait) = wait.to_std() else {
         return Ok(false);
     };
     println!("等待至 {}，输入 cancel 取消", target.to_rfc3339());
+    resume_readline(readline, ARM_PROMPT)?;
     tokio::select! {
-        _ = tokio::time::sleep(wait) => Ok(false),
-        line = lines.next_line() => {
-            if line?.as_deref().is_some_and(|value| value.trim() == "cancel") {
-                println!("已取消");
-                Ok(true)
-            } else {
-                bail!("定时 arm 期间只接受 cancel")
+        _ = tokio::time::sleep(wait) => {
+            suspend_readline(readline)?;
+            Ok(false)
+        },
+        event = readline.readline() => {
+            match event? {
+                ReadlineEvent::Line(line) => {
+                    let line = line.trim();
+                    suspend_readline(readline)?;
+                    if line == "cancel" {
+                        println!("已取消");
+                        Ok(true)
+                    } else {
+                        bail!("定时 arm 期间只接受 cancel")
+                    }
+                }
+                ReadlineEvent::Interrupted => {
+                    suspend_readline(readline)?;
+                    println!("已取消");
+                    Ok(true)
+                }
+                ReadlineEvent::Eof => {
+                    disable_raw_mode()?;
+                    Ok(true)
+                },
             }
         }
     }
