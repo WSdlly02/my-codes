@@ -1,105 +1,96 @@
-# course-election REPL 驱动工具
+# course-election PTY 驱动
 
-让选课 REPL 在后台常驻，通过 Unix socket 用短命令自动化操作（抢课、脚本化、AI 助手驱动）。
+`repl-pty.py` 在当前终端中运行 `course-election`，将键盘输入直接转发给子 PTY，并把程序输出
+追加到日志。Agent 通过 Unix socket 写入同一个 PTY，通过日志读取结果；不依赖 Zellij 或 tmux。
 
-## 原理
+## 启动
 
-```
-每次操作 = 短命 client（pty_client.py）
-    │ 连接 /tmp/course-repl.sock
-    ▼
-┌──────────────────────────────────────┐
-│ pty_driver.py（常驻进程）               │
-│  ├─ 分配伪终端（PTY），挂载 REPL 子进程  │
-│  └─ socket ⇄ PTY 双向转发字节           │
-└──────────────┬───────────────────────┘
-               ▼
-     course-election（你的 Rust REPL，一直活着）
-```
-
-关键点：
-
-- REPL 进程**不随命令结束**，状态（登录 Cookie、profile、target）一直保留；
-- 用 PTY 而不是管道，所以 `rpassword` 隐藏密码输入、终端回显等行为都正常；
-- 每次执行只是一次 socket 连接：发输入、收输出、断开。
-
-## 文件
-
-| 文件 | 作用 |
-|---|---|
-| `pty_driver.py` | 常驻驱动：起 PTY、挂 REPL、开 socket |
-| `pty_client.py` | 客户端：发送 stdin 内容，打印 REPL 输出 |
-| `repl_login.py` | 用 `.env` 的 USERNAME/PASSWORD 安全登录 |
-| `start-repl.sh` / `stop-repl.sh` | 一键启停 |
-| `repl.md` | 本文档 |
-
-## 快速开始
+在希望长期保留的终端中运行：
 
 ```bash
-# 1. 启动（后台常驻）
-./repl-driver/start-repl.sh
-
-# 2. 发命令（短命令）
-printf 'status\n' | python3 repl-driver/pty_client.py /tmp/course-repl.sock --wait 'course-election> '
-
-# 3. 登录（读 .env，密码不回显不落盘）
-python3 repl-driver/repl_login.py
-
-# 4. 停止
-./repl-driver/stop-repl.sh
+python3 repl-driver/repl-pty.py run './course-election' \
+  --log /tmp/course-election-repl.log --in-sock /tmp/course-agent.sock
 ```
 
-## pty_client.py 参数
+这个前台进程持有 REPL 和其中的登录状态、Cookie、课程缓存及预热连接。人可以直接在该终端
+输入，方向键历史、Ctrl+C/D 等行为与直接运行 `course-election` 相同。
 
-- `--wait 'course-election> '`：**推荐**。等到 REPL 提示符出现才返回，能抓完整输出，
-  适合 `login` / `refresh` / `export-schedule` 等耗时命令。
-- `--idle 秒数`：默认 1.2。最后一段输出后空闲 N 秒即返回（`--wait` 未给时生效）。
-  适合会持续输出或中途等待的命令（如 `arm` 待命状态没有提示符）。
-- `--max 秒数`：硬性上限，默认 120，防卡死。
+同一个 socket 已有活跃进程时，第二次启动会拒绝覆盖；异常退出留下的失效 socket 会自动清理。
 
-示例：
+## Agent 异步操作
+
+提交命令：
 
 ```bash
-printf 'find 海事法\n' | python3 repl-driver/pty_client.py /tmp/course-repl.sock --wait 'course-election> '
-printf 'arm\n'         | python3 repl-driver/pty_client.py /tmp/course-repl.sock --idle 3 --max 30
-printf 'fire\n'        | python3 repl-driver/pty_client.py /tmp/course-repl.sock --wait 'course-election> '
-printf 'quit\n'        | python3 repl-driver/pty_client.py /tmp/course-repl.sock --idle 1 --max 10
+python3 repl-driver/repl-pty.py write 'profile 2936' \
+  --log /tmp/course-election-repl.log --in-sock /tmp/course-agent.sock
 ```
 
-## 抢课标准流程
+`write` 会先把日志当前长度保存为唯一 baseline，再将命令和回车写入 PTY，然后立即退出。
+
+读取结果：
 
 ```bash
-python3 repl-driver/repl_login.py                                    # 1. 登录（.env）
-printf 'channels\n' | python3 repl-driver/pty_client.py /tmp/course-repl.sock --wait 'course-election> '   # 2. 看轮次
-printf 'profile 2936\n' | ... --wait 'course-election> '             # 3. 选轮次
-printf 'refresh\n' | ... --wait 'course-election> '                  # 4. 刷新数据
-printf 'find 海事法\n' | ... --wait 'course-election> '              # 5. 查课
-printf 'target 242153\n' | ... --wait 'course-election> '            # 6. 固定目标
-printf 'arm 2026-09-01T12:00:00+08:00\n' | ... --wait 'course-election> '   # 7a. 定时抢
-printf 'arm\n' | ... --idle 3 --max 60                               # 7b. 手动待命（有保活输出）
-printf 'fire 20 500\n' | ... --wait 'course-election> '              # 8. 触发/重试
+python3 repl-driver/repl-pty.py read --log /tmp/course-election-repl.log
+python3 repl-driver/repl-pty.py read --wait 5 --log /tmp/course-election-repl.log
 ```
 
-注意：
+`read` 输出 `baseline` 到当前日志末尾的全部字节，但不移动 baseline。因此重复读取会得到从最近
+一次 `write` 开始的累计输出；下一次 `write` 才会覆盖观察窗口。`--wait` 在暂时没有新输出时
+最多等待指定秒数，空输出只表示程序尚未打印新内容。
 
-- `arm`（不带时间）进入待命后**不再打印提示符**，直到输入 `fire` 或 `cancel`；
-- `fire 0 500` 是无限重试，会持续输出，请用 `--max` 限时或改用有限次数；
-- `export-schedule` 产物写到 REPL 的工作目录（`start-repl.sh` 已设为项目根目录）。
+查看完整日志：
 
-## 技巧与坑
+```bash
+python3 repl-driver/repl-pty.py read --all --log /tmp/course-election-repl.log
+```
 
-1. **长命令一定用 `--wait` 提示符**，不要用默认 idle：`login` 在“密码: ”之后可能安静
-   十几秒（OCR/网络），idle 会提前断开导致输出丢失。
-2. **输出不缓存**：没有客户端连接期间 REPL 的输出会丢（驱动只转发给在线客户端）。
-   先连再发，天然满足；丢了也没关系，用 `status` 等命令确认状态。
-3. **一次一个会话**：socket 被占用时 `start-repl.sh` 会拒绝启动；先 stop 再 start。
-4. **工作目录**：导出文件写到 REPL 的 cwd（`start-repl.sh` 已设为项目目录）。
-5. **pkill 自匹配**：`stop-repl.sh` 用 `[.]` 转义避免误杀自身命令行。
-6. 驱动是通用的：任何交互式程序都能套（`python3 -i`、node、其他 Rust REPL），
-   换 `--cmd` 即可。
+Agent 通过 socket 提交命令时，驱动会丢弃输入回显结束前的 PTY 输出，因此逐字符重绘和命令
+回显不会写入日志。之后的程序输出会剥离 ANSI 控制序列（光标移动、清屏、颜色等）后按可见
+文本写入日志，人类终端仍显示原生输出。已经写入的历史不会因终端尺寸变化而重排。人类直接
+键盘输入不经过该过滤器。
 
-## 安全
+## 两步登录
 
-- 密码只在 `repl_login.py` 进程内读取并直接发给 REPL 的隐藏提示符，**不打印、不写文件**；
-- REPL 本身不持久化密码（只存 JWXT Cookie 到 `cache/cookies.json`）；
-- 不要把 `.env` 提交进 git；建议 `chmod 600 .env`。
+假设 shell 中已有 `USERNAME` 和 `PASSWORD`：
+
+```bash
+python3 repl-driver/repl-pty.py write "login $USERNAME" \
+  --log /tmp/course-election-repl.log --in-sock /tmp/course-agent.sock
+python3 repl-driver/repl-pty.py read --wait 10 --log /tmp/course-election-repl.log
+
+python3 repl-driver/repl-pty.py write "$PASSWORD" \
+  --log /tmp/course-election-repl.log --in-sock /tmp/course-agent.sock
+python3 repl-driver/repl-pty.py read --wait 10 --log /tmp/course-election-repl.log
+```
+
+第一次 `read` 用于确认已经出现密码提示；第二次 `write` 会建立新的 baseline，随后 `read` 获取
+OCR、CAS 登录结果及后续输出。
+
+## 人与 Agent 同时操作
+
+人类键盘和 Agent socket 都写入同一个 PTY，终端上能看到双方操作。避免在同一瞬间输入，
+否则字节可能交错。人类输入不会改变 Agent baseline，但对应输出会自然出现在当前累计日志中。
+
+## 退出
+
+人类可直接输入 `quit`，Agent 也可发送：
+
+```bash
+python3 repl-driver/repl-pty.py write 'quit' \
+  --log /tmp/course-election-repl.log --in-sock /tmp/course-agent.sock
+```
+
+子程序退出后，驱动恢复当前终端设置，并删除输入 socket、日志和 `<log>.baseline`。这些文件只在
+当前 REPL 运行期间存在；强制杀死驱动或断电时可能残留。
+
+## 参数
+
+| 参数 | 默认值 | 作用 |
+|---|---|---|
+| `run <程序>` | 无 | 启动指定的交互程序 |
+| `--log` | `repl.log` | 追加输出日志 |
+| `--in-sock` | `/tmp/repl-pty.sock` | Agent 输入 socket |
+| `--wait` | `0` | `read` 等待新输出的秒数 |
+| `--all` | 关闭 | `read` 输出完整日志 |
+| `--lf` | 关闭 | `write` 使用 LF 而不是 CR 提交命令 |

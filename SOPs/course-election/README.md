@@ -144,11 +144,18 @@ quit
 
 ## REPL 驱动工具（自动化操作）
 
-`repl-driver/` 提供一套基于 PTY + Unix socket 的驱动工具，可让本程序在后台常驻，
-通过短命令自动化操作（适合抢课脚本、AI 助手驱动等）：
+`repl-driver/repl-pty.py` 在当前终端运行程序，同时提供 Unix socket 输入通道和追加日志。
+人可以直接操作原生 REPL，Agent 可以异步提交命令并累计读取最近一次提交后的输出；Agent
+输入产生的逐字符终端重绘不会写入日志：
 
-- `repl-driver/pty_driver.py`：把 REPL 挂到伪终端并暴露 Unix socket（常驻进程）
-- `repl-driver/pty_client.py`：向会话发送命令并收取输出（支持等待提示符）
-- `repl-driver/repl_login.py`：用 `.env` 的 USERNAME/PASSWORD 安全登录（密码不落盘、不回显）
-- `repl-driver/start-repl.sh` / `stop-repl.sh`：一键启停
-- 详细说明见 `repl-driver/repl.md`
+```bash
+python3 repl-driver/repl-pty.py run './course-election' \
+  --log /tmp/course-election-repl.log --in-sock /tmp/course-agent.sock
+
+python3 repl-driver/repl-pty.py write 'status' \
+  --log /tmp/course-election-repl.log --in-sock /tmp/course-agent.sock
+python3 repl-driver/repl-pty.py read --log /tmp/course-election-repl.log
+```
+
+关闭程序时在 REPL 输入 `quit`；驱动会自动删除 socket、log 和 baseline。详细语义和两步登录示例见
+[repl-driver/repl.md](repl-driver/repl.md)。

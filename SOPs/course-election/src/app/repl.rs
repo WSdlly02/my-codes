@@ -45,12 +45,13 @@ pub(crate) async fn run() -> Result<()> {
     };
     print_help();
     let (mut readline, mut writer) = Readline::new(PROMPT.to_string())?;
-    readline.should_print_line_on(true, false);
+    readline.should_print_line_on(false, false);
 
     loop {
         let line = match readline.readline().await? {
             ReadlineEvent::Line(line) => {
                 suspend_readline(&mut readline)?;
+                println!("{PROMPT}{line}");
                 line
             }
             ReadlineEvent::Interrupted => {
@@ -294,8 +295,9 @@ async fn run_arm(
                 event = readline.readline() => {
                     match event? {
                         ReadlineEvent::Line(line) => {
-                            let line = line.trim();
                             suspend_readline(readline)?;
+                            println!("{ARM_PROMPT}{line}");
+                            let line = line.trim();
                             if line == "cancel" {
                                 println!("已取消");
                                 return Ok(());
@@ -357,8 +359,9 @@ async fn wait_until_or_cancel(
         event = readline.readline() => {
             match event? {
                 ReadlineEvent::Line(line) => {
-                    let line = line.trim();
                     suspend_readline(readline)?;
+                    println!("{ARM_PROMPT}{line}");
+                    let line = line.trim();
                     if line == "cancel" {
                         println!("已取消");
                         Ok(true)
