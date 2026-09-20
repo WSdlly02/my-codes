@@ -1,0 +1,2 @@
+# Only collect.py needs this dependency; mooc.py uses the standard library.
+playwright>=1.40,<2

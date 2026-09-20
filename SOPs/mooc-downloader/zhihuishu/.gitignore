@@ -1,0 +1,28 @@
+# —— 代码 / 环境 ——
+__pycache__/
+.venv/
+.pytest_cache/
+
+# —— 数据产物：一律不入库，全部由脚本本地生成 ——
+# 下载的媒体
+*.mp4
+*.m4a
+*.mp3
+# 清单与报告
+*.psv
+*.csv
+*.tsv
+*.json
+*.jsonl
+# 中间文件
+*.part
+*.headers
+
+# —— 生成目录 ——
+downloads/
+reports/
+xhr/
+evidence/
+# 浏览器专用配置目录（不要放进仓库，建议放到仓库外）
+chrome-profile/
+.browser-profile/
