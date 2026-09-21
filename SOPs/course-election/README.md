@@ -64,10 +64,10 @@ course-election> target 242153
 
 ```text
 course-election> arm
-已预热；按 Enter 或输入 fire 触发，输入 cancel 取消
+正在预热；按 Enter 或输入 fire 触发，输入 cancel 取消
 ```
 
-待命期间每 10 秒保活一次。触发时使用本次 `defaultPage` 响应头的 `Date` 生成 `elecSessionTime`，随后立即通过第二条预热连接 POST。
+待命期间立即预热，完成后等待 10 秒再保活。预热请求最多 2 秒、不重试，失败只提示；输入和定时触发不等待预热，触发时取消本地未完成的预热（不保证服务器已经停止处理）。触发时使用本次 `defaultPage` 响应头的 `Date` 生成 `elecSessionTime`，随后立即 POST，尽量复用连接池中的连接。
 
 定时触发使用 RFC3339 时间：
 
@@ -75,7 +75,7 @@ course-election> arm
 course-election> arm 2026-09-01T12:00:00+08:00
 ```
 
-程序在 T-5 秒执行双连接预热，并在目标时间发起一次选课。
+程序在 T-5 秒开始并发预热，并在目标时间发起一次选课。打印预热耗时和定时触发偏差；偏差依据本地时钟，不代表请求到达服务器的时间。
 
 直接选课及重试：
 
@@ -90,6 +90,10 @@ course-election> fire 0 500
 ```text
 fresh defaultPage → Date → elecSessionTime → batchOperator
 ```
+
+每次尝试打印 `defaultPage` 响应头耗时（含 GET 重试）、POST 完整响应耗时及选课总耗时。页面响应体在后台排空，不阻塞结果输出或下一次尝试；Cookie 在内存中即时更新，整轮成功或耗尽次数后保存，正常退出时也保存。强制终止进程不保证落盘。重试间隔仍从一次尝试结束后计算，POST 保持串行。
+
+本地慢服务器回归测试：`python3 tests/arm_prewarm.py ./course-election`，使用隔离目录和本地代理，不访问真实选课接口。
 
 退课：
 

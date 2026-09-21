@@ -285,42 +285,44 @@ async fn run_arm(
     let profile = require_profile(state)?;
     require_target(state)?;
     if argument.trim().is_empty() {
-        prewarm(&state.session, profile).await?;
-        println!("已预热；按 Enter 或输入 fire 触发，输入 cancel 取消");
+        println!("正在预热；按 Enter 或输入 fire 触发，输入 cancel 取消");
         resume_readline(readline, ARM_PROMPT)?;
-        let mut keepalive = tokio::time::interval(Duration::from_secs(10));
-        keepalive.tick().await;
-        loop {
-            tokio::select! {
-                event = readline.readline() => {
-                    match event? {
-                        ReadlineEvent::Line(line) => {
-                            suspend_readline(readline)?;
-                            println!("{ARM_PROMPT}{line}");
-                            let line = line.trim();
-                            if line == "cancel" {
-                                println!("已取消");
-                                return Ok(());
-                            }
-                            readline.add_history_entry(line.to_string());
-                            let arguments = line.strip_prefix("fire").unwrap_or(line).trim();
-                            return run_fire_command(state, arguments).await;
-                        }
-                        ReadlineEvent::Interrupted => {
-                            suspend_readline(readline)?;
-                            println!("已取消");
-                            return Ok(());
-                        }
-                        ReadlineEvent::Eof => {
-                            disable_raw_mode()?;
-                            return Ok(());
-                        }
-                    }
+        let event = {
+            let input = readline.readline();
+            tokio::pin!(input);
+            loop {
+                tokio::select! {
+                    biased;
+                    event = &mut input => break event?,
+                    result = async {
+                        report_prewarm(&state.session, profile, writer).await?;
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        Ok::<(), anyhow::Error>(())
+                    } => result?,
                 }
-                _ = keepalive.tick() => {
-                    prewarm(&state.session, profile).await?;
-                    writeln!(writer, "连接已保活")?;
+            }
+        }; // Drop any in-flight prewarm before starting the action.
+        match event {
+            ReadlineEvent::Line(line) => {
+                suspend_readline(readline)?;
+                println!("{ARM_PROMPT}{line}");
+                let line = line.trim();
+                if line == "cancel" {
+                    println!("已取消");
+                    return Ok(());
                 }
+                readline.add_history_entry(line.to_string());
+                let arguments = line.strip_prefix("fire").unwrap_or(line).trim();
+                return run_fire_command(state, arguments).await;
+            }
+            ReadlineEvent::Interrupted => {
+                suspend_readline(readline)?;
+                println!("已取消");
+                return Ok(());
+            }
+            ReadlineEvent::Eof => {
+                disable_raw_mode()?;
+                return Ok(());
             }
         }
     }
@@ -333,12 +335,35 @@ async fn run_arm(
     if wait_until_or_cancel(prewarm_at, readline).await? {
         return Ok(());
     }
-    prewarm(&state.session, profile).await?;
-    println!("T-5s 预热完成");
-    if wait_until_or_cancel(target, readline).await? {
+    let cancelled = {
+        let wait = wait_until_or_cancel(target, readline);
+        tokio::pin!(wait);
+        tokio::select! {
+            biased;
+            result = &mut wait => result?,
+            result = report_prewarm(&state.session, profile, writer) => {
+                result?;
+                wait.await?
+            }
+        }
+    };
+    if cancelled {
         return Ok(());
     }
+    let lateness = Utc::now().signed_duration_since(target).num_milliseconds();
+    eprintln!("计时：定时触发偏差 {lateness:+}ms（本地时钟）");
     run_action(state, 1, Duration::from_millis(500), true).await
+}
+
+async fn report_prewarm(session: &Session, profile: &str, writer: &mut SharedWriter) -> Result<()> {
+    let started = std::time::Instant::now();
+    let result = prewarm(session, profile).await;
+    let elapsed = started.elapsed().as_millis();
+    match result {
+        Ok(()) => writeln!(writer, "预热完成：{elapsed}ms")?,
+        Err(error) => writeln!(writer, "预热失败：{elapsed}ms，{error}；仍可触发选课")?,
+    }
+    Ok(())
 }
 
 async fn wait_until_or_cancel(
@@ -404,6 +429,19 @@ fn parse_retry_args(argument: &str) -> Result<(usize, Duration)> {
 }
 
 async fn run_action(
+    state: &State,
+    attempts: usize,
+    interval: Duration,
+    select: bool,
+) -> Result<()> {
+    let result = run_action_inner(state, attempts, interval, select).await;
+    if let Err(error) = state.session.persist_cookies() {
+        eprintln!("保存 Cookie 失败：{error:#}");
+    }
+    result
+}
+
+async fn run_action_inner(
     state: &State,
     attempts: usize,
     interval: Duration,

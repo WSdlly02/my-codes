@@ -8,7 +8,7 @@ use reqwest::header::{
 use reqwest::{Client, Method, Response, StatusCode, Url};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::app::cache::{
     load_count_snapshot, load_mapping_cache, save_channel_cache, save_cookies, save_count_snapshot,
@@ -312,24 +312,28 @@ pub(crate) async fn query_course_data(
 }
 
 pub(crate) async fn prewarm(session: &Session, profile_id: &str) -> Result<()> {
-    let channels_url = format!("{BASE_URL}/stdElectCourse.action");
-    let channels = async {
+    let warm = async |url: String| -> Result<()> {
         let response = session
-            .get_with_retry(&channels_url, HeaderMap::new(), None)
+            .client()
+            .get(url)
+            .timeout(Duration::from_secs(2))
+            .send()
             .await?;
         reject_redirect(&response, "连接预热")?;
-        response.bytes().await.context("排空预热响应失败")?;
-        Result::<()>::Ok(())
-    };
-    let default_page = async {
-        fetch_default_page(session, profile_id)
-            .await?
+        response
+            .error_for_status()?
             .bytes()
             .await
-            .context("排空 defaultPage 预热响应失败")?;
-        Result::<()>::Ok(())
+            .context("排空预热响应失败")?;
+        Ok(())
     };
-    tokio::try_join!(channels, default_page)?;
+    tokio::try_join!(
+        warm(format!("{BASE_URL}/stdElectCourse.action")),
+        warm(format!(
+            "{BASE_URL}/stdElectCourse!defaultPage.action?electionProfile.id={}",
+            urlencoding(profile_id)
+        ))
+    )?;
     Ok(())
 }
 
@@ -338,24 +342,30 @@ pub(crate) async fn select_lesson(
     profile_id: &str,
     lesson_id: &str,
 ) -> Result<String> {
-    let response = fetch_default_page(session, profile_id).await?;
+    let started = Instant::now();
+    let response = fetch_default_page(session, profile_id).await;
+    let headers_ms = started.elapsed().as_millis();
+    let response = response
+        .inspect_err(|_| eprintln!("计时：defaultPage 响应头失败 {headers_ms}ms（含重试）"))?;
     let date = response
         .headers()
         .get("date")
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| anyhow!("defaultPage 响应头缺少 Date"))?
         .to_string();
-    let drain = tokio::spawn(async move { response.bytes().await });
+    tokio::spawn(async move {
+        let _ = response.bytes().await;
+    });
     let parsed = DateTime::parse_from_rfc2822(&date).context("解析 Date 失败")?;
     let elec_session_time = parsed
         .with_timezone(&Shanghai)
         .format("%Y%m%d%H%M%S")
         .to_string();
     let result = batch_operate(session, profile_id, lesson_id, &elec_session_time, true).await;
-    let _ = drain.await;
-    if result.is_ok() {
-        session.persist_cookies()?;
-    }
+    eprintln!(
+        "计时：defaultPage 响应头 {headers_ms}ms（含重试），本次选课 {}ms",
+        started.elapsed().as_millis()
+    );
     result
 }
 
@@ -364,11 +374,7 @@ pub(crate) async fn drop_lesson(
     profile_id: &str,
     lesson_id: &str,
 ) -> Result<String> {
-    let result = batch_operate(session, profile_id, lesson_id, "undefined", false).await;
-    if result.is_ok() {
-        session.persist_cookies()?;
-    }
-    result
+    batch_operate(session, profile_id, lesson_id, "undefined", false).await
 }
 
 pub(crate) async fn query_class_schedule_html(
@@ -483,15 +489,25 @@ async fn batch_operate(
             "{BASE_URL}/stdElectCourse!defaultPage.action?electionProfile.id={profile_id}"
         ))?,
     );
-    session
-        .request(Method::POST, &url, headers, None)
-        .body(format!("operator0={}", urlencoding(&operator)))
-        .send()
-        .await
-        .context("发送选课请求失败")?
-        .text()
-        .await
-        .context("读取选课响应失败")
+    let started = Instant::now();
+    let result = async {
+        session
+            .request(Method::POST, &url, headers, None)
+            .body(format!("operator0={}", urlencoding(&operator)))
+            .send()
+            .await
+            .context("发送选课请求失败")?
+            .text()
+            .await
+            .context("读取选课响应失败")
+    }
+    .await;
+    eprintln!(
+        "计时：POST 完整响应 {}ms{}",
+        started.elapsed().as_millis(),
+        if result.is_err() { "（失败）" } else { "" }
+    );
+    result
 }
 
 async fn fetch_class_schedule_entry_html(session: &Session, semester_id: &str) -> Result<String> {
