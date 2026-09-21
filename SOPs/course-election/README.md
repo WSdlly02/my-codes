@@ -25,11 +25,11 @@ course-election> login 202410000000
 
 密码不会显示或写入文件。程序会：
 
-1. 请求教务系统，经 `ng.shmtu.edu.cn` 认证网关进入 CAS；
+1. 请求教务系统，直接跳转到 CAS（service 指向教务首页）；
 2. 解析当前页面的 `execution`；
 3. 请求带 `captchaToken` 的验证码；
 4. 使用本地 Ollama 识别算术验证码；
-5. 提交 CAS 表单，完成网关 ticket 回调和教务域通行 Cookie 签发，再利用 CAS TGC 自动完成教务系统的第二次认证（无需再次输入密码）；
+5. 提交 CAS 表单，将返回的教务 ticket 回调升级为 HTTPS 后访问；
 6. 验证教务系统 Session 并保存 JWXT Cookie。
 
 验证码错误最多自动刷新三次；密码错误立即停止。默认 OCR 服务为：
@@ -119,7 +119,7 @@ cache/mapping_<profileID>.json
 cache/counts_<profileID>.json
 ```
 
-Cookie 只保存 JWXT 域（包含网关签发的 `wengine_new_ticket`），并在网络操作结束后写入；密码、CAS TGC 和 URL 中的一次性 ticket 不会持久化。登录仅支持当前网关链路，回调最多跟随 10 次，限制主机、路径和 HTTPS；教务 CAS 返回的 HTTP 首页回调会先升级为 HTTPS。
+Cookie 只保存 JWXT 域，并在网络操作结束后写入；密码、CAS TGC 和 URL 中的一次性 ticket 不会持久化。登录按当前直接 CAS 链路实现，限制跳转主机、路径和 HTTPS；支持教务首页路径中的 `;jsessionid=...`，HTTP 首页回调会先升级为 HTTPS。
 
 `clear` 清除登录 Cookie；`clear all` 同时清除课程映射和容量缓存。
 
