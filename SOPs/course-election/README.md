@@ -25,11 +25,11 @@ course-election> login 202410000000
 
 密码不会显示或写入文件。程序会：
 
-1. 请求教务系统，直接跳转到 CAS（service 指向教务首页）；
+1. 请求教务系统，按实际重定向直接或经 `ng.shmtu.edu.cn` 网关进入 CAS；
 2. 解析当前页面的 `execution`；
 3. 请求带 `captchaToken` 的验证码；
 4. 使用本地 Ollama 识别算术验证码；
-5. 提交 CAS 表单，将返回的教务 ticket 回调升级为 HTTPS 后访问；
+5. 提交 CAS 表单，核对 ticket 回调与本次 service 一致，跟随教务或网关回调链；网关后的教务 CAS 认证复用同一 Cookie Jar 自动完成，不重复提交密码；
 6. 验证教务系统 Session 并保存 JWXT Cookie。
 
 验证码错误最多自动刷新三次；密码错误立即停止。默认 OCR 服务为：
@@ -53,8 +53,8 @@ course-election> target 242153
 
 - `channels`：在线刷新选课轮次。
 - `profile <id>`：选择轮次；切换轮次会清除当前 target。
-- `refresh`：获取课程数据并刷新容量。
-- `find [--selected] [--id ID|--code CODE|名称]`：查询全部课程或按名称、ID、课程号、已选状态过滤。
+- `refresh`：显式联网更新课程列表和容量，即使已有课程缓存也重新获取；容量获取失败时可回退到旧容量缓存。
+- `find [--selected] [--id ID|--code CODE|名称]`：只读本地课程和容量缓存，按名称、ID、课程号过滤，不自动联网；课程缓存缺失时提示先执行 `refresh`。容量为上次缓存值，可能过时；缺失时仍可搜索课程。`--selected` 是例外，会额外联网获取当前已选状态。
 - `target <lesson-id|完整课程名>`：固定热路径目标；完整课程名必须唯一匹配。
 - `status`：查看登录、profile、target 和缓存状态。
 
@@ -67,7 +67,7 @@ course-election> arm
 正在预热；按 Enter 或输入 fire 触发，输入 cancel 取消
 ```
 
-待命期间立即预热，完成后等待 10 秒再保活。预热请求最多 2 秒、不重试，失败只提示；输入和定时触发不等待预热，触发时取消本地未完成的预热（不保证服务器已经停止处理）。触发时使用本次 `defaultPage` 响应头的 `Date` 生成 `elecSessionTime`，随后立即 POST，尽量复用连接池中的连接。
+待命期间立即预热，完成后等待 10 秒再保活。仅访问入口 `stdElectCourse.action`，不访问会更新服务端选课 token 的 `defaultPage`。预热请求最多 2 秒、不重试，失败只提示；输入和定时触发不等待预热，触发时取消本地未完成的预热（不保证服务器已经停止处理）。触发后读取 `defaultPage` HTML 隐藏字段 `elecSessionTime`，随后 POST，尽量复用连接池中的连接。
 
 定时触发使用 RFC3339 时间：
 
@@ -75,7 +75,7 @@ course-election> arm
 course-election> arm 2026-09-01T12:00:00+08:00
 ```
 
-程序在 T-5 秒开始并发预热，并在目标时间发起一次选课。打印预热耗时和定时触发偏差；偏差依据本地时钟，不代表请求到达服务器的时间。
+程序在 T-5 秒开始预热入口连接，并在目标时间发起一次选课。打印预热耗时和定时触发偏差；偏差依据本地时钟，不代表请求到达服务器的时间。
 
 直接选课及重试：
 
@@ -85,15 +85,21 @@ course-election> fire 20 500
 course-election> fire 0 500
 ```
 
-参数依次为尝试次数和间隔毫秒；次数 `0` 表示无限。每次尝试都会重新执行：
+参数依次为尝试次数和间隔毫秒；次数 `0` 表示无限。一轮 `fire` 内复用页面 token：
 
 ```text
-fresh defaultPage → Date → elecSessionTime → batchOperator
+首次：defaultPage 完整 HTML → elecSessionTime → batchOperator
+普通失败后的重试：同一 elecSessionTime → batchOperator
+明确“同时打开多个选课页面”拒绝：清除 token → 下次允许的尝试重新 GET 后 POST
 ```
 
-每次尝试打印 `defaultPage` 响应头耗时（含 GET 重试）、POST 完整响应耗时及选课总耗时。页面响应体在后台排空，不阻塞结果输出或下一次尝试；Cookie 在内存中即时更新，整轮成功或耗尽次数后保存，正常退出时也保存。强制终止进程不保证落盘。重试间隔仍从一次尝试结束后计算，POST 保持串行。
+token 只来自 HTML，不从 HTTP Date 推算；字段缺失或异常时不提交。token 不跨 `fire` 命令缓存，避免 `refresh` / `find --selected` 等操作更新页面后误用旧值。失效刷新不增加隐式 POST 或额外尝试额度；网络异常仍不能证明服务端未执行，不自动判定成功。
+
+获取 token 时打印 `defaultPage` 完整响应及解析耗时（含 GET 重试），提交时打印 POST 完整响应及本次选课总耗时。Cookie 在内存中即时更新，整轮成功或耗尽次数后保存，正常退出时也保存。强制终止进程不保证落盘。重试间隔仍从一次尝试结束后计算，POST 保持串行。
 
 本地慢服务器回归测试：`python3 tests/arm_prewarm.py ./course-election`，使用隔离目录和本地代理，不访问真实选课接口。
+
+选课链路回归：`python3 tests/selection_path.py target/debug/course-election`（先 `cargo build`，需 Python 3 与 `openssl`）。使用临时证书、本地 TLS 模拟服务器和隔离目录，验证 HTML token、复用、失效刷新、尝试额度、缺失字段及退课；不连接真实教务系统。
 
 退课：
 
@@ -123,7 +129,7 @@ cache/mapping_<profileID>.json
 cache/counts_<profileID>.json
 ```
 
-Cookie 只保存 JWXT 域，并在网络操作结束后写入；密码、CAS TGC 和 URL 中的一次性 ticket 不会持久化。登录按当前直接 CAS 链路实现，限制跳转主机、路径和 HTTPS；支持教务首页路径中的 `;jsessionid=...`，HTTP 首页回调会先升级为 HTTPS。
+Cookie 只保存 JWXT 域（含网关在该域签发的 Cookie），并在网络操作结束后写入；密码、CAS TGC 和 URL 中的一次性 ticket 不会持久化。直接 CAS 与网关链路共用受限跳转处理，整个登录最多跟随 10 次重定向，仅允许已验证的主机、路径和 HTTPS；教务 HTTP 首页回调先升级为 HTTPS，保留 `;jsessionid=...`。未知跳转仅显示脱敏地址；服务端 CAS 校验的 TLS 握手错误会单独提示，错误正文以权限 `0600` 保存到临时文件。
 
 `clear` 清除登录 Cookie；`clear all` 同时清除课程映射和容量缓存。
 

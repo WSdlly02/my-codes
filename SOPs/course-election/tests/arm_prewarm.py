@@ -71,7 +71,7 @@ def main():
             mark = send('arm')
             wait('预热失败', mark, timeout=3)
             assert time.monotonic() - started < 3
-            assert proxy.requests - before == 2, 'two endpoints, no retries'
+            assert proxy.requests - before == 1, 'entry only, no retries'
             wait('已取消', send('cancel'))
             print('PASS: prewarm timeout is bounded and not retried')
 

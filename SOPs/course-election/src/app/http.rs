@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::DateTime;
-use chrono_tz::Asia::Shanghai;
 use reqwest::cookie::{CookieStore, Jar};
 use reqwest::header::{
     ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HeaderMap, HeaderValue, ORIGIN, REFERER,
@@ -11,12 +10,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::app::cache::{
-    load_count_snapshot, load_mapping_cache, save_channel_cache, save_cookies, save_count_snapshot,
-    save_mapping_cache,
+    load_count_snapshot, save_channel_cache, save_cookies, save_count_snapshot, save_mapping_cache,
 };
 use crate::app::parser::{
     build_lesson_count_snapshot, build_lesson_mapping_cache, parse_channels, parse_count_payload,
-    parse_elected_ids, parse_lesson_payload, parse_unique_std_id,
+    parse_elec_session_time, parse_elected_ids, parse_lesson_payload, parse_unique_std_id,
+    selection_session_expired,
 };
 use crate::app::support::{
     BASE_URL, DEFAULT_TIMEOUT_SECS, RETRY_ATTEMPTS, now_fixed, should_retry_status, urlencoding,
@@ -257,25 +256,7 @@ pub(crate) async fn fetch_and_cache_channels(session: &Session) -> Result<Vec<Ch
     Ok(channels)
 }
 
-pub(crate) async fn query_course_data(
-    session: Option<&Session>,
-    profile_id: &str,
-) -> Result<CourseData> {
-    if let Ok(mapping) = load_mapping_cache(profile_id)
-        && !mapping.lessons.is_empty()
-    {
-        let (counts, counts_from_cache) = refresh_or_load_counts(session, profile_id)
-            .await
-            .unwrap_or((None, false));
-        return Ok(CourseData {
-            mapping,
-            counts,
-            counts_from_cache,
-        });
-    }
-
-    let session = session
-        .ok_or_else(|| anyhow!("课程映射缓存不存在，且当前无法在线获取 profile={profile_id}"))?;
+pub(crate) async fn refresh_course_data(session: &Session, profile_id: &str) -> Result<CourseData> {
     fetch_default_page(session, profile_id)
         .await?
         .bytes()
@@ -311,29 +292,20 @@ pub(crate) async fn query_course_data(
     })
 }
 
-pub(crate) async fn prewarm(session: &Session, profile_id: &str) -> Result<()> {
-    let warm = async |url: String| -> Result<()> {
-        let response = session
-            .client()
-            .get(url)
-            .timeout(Duration::from_secs(2))
-            .send()
-            .await?;
-        reject_redirect(&response, "连接预热")?;
-        response
-            .error_for_status()?
-            .bytes()
-            .await
-            .context("排空预热响应失败")?;
-        Ok(())
-    };
-    tokio::try_join!(
-        warm(format!("{BASE_URL}/stdElectCourse.action")),
-        warm(format!(
-            "{BASE_URL}/stdElectCourse!defaultPage.action?electionProfile.id={}",
-            urlencoding(profile_id)
-        ))
-    )?;
+pub(crate) async fn prewarm(session: &Session) -> Result<()> {
+    // defaultPage changes the server-side election token, even if we cancel locally.
+    let response = session
+        .client()
+        .get(format!("{BASE_URL}/stdElectCourse.action"))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await?;
+    reject_redirect(&response, "连接预热")?;
+    response
+        .error_for_status()?
+        .bytes()
+        .await
+        .context("排空预热响应失败")?;
     Ok(())
 }
 
@@ -341,31 +313,42 @@ pub(crate) async fn select_lesson(
     session: &Session,
     profile_id: &str,
     lesson_id: &str,
+    elec_session_time: &mut Option<String>,
 ) -> Result<String> {
     let started = Instant::now();
-    let response = fetch_default_page(session, profile_id).await;
-    let headers_ms = started.elapsed().as_millis();
-    let response = response
-        .inspect_err(|_| eprintln!("计时：defaultPage 响应头失败 {headers_ms}ms（含重试）"))?;
-    let date = response
-        .headers()
-        .get("date")
-        .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| anyhow!("defaultPage 响应头缺少 Date"))?
-        .to_string();
-    tokio::spawn(async move {
-        let _ = response.bytes().await;
-    });
-    let parsed = DateTime::parse_from_rfc2822(&date).context("解析 Date 失败")?;
-    let elec_session_time = parsed
-        .with_timezone(&Shanghai)
-        .format("%Y%m%d%H%M%S")
-        .to_string();
-    let result = batch_operate(session, profile_id, lesson_id, &elec_session_time, true).await;
-    eprintln!(
-        "计时：defaultPage 响应头 {headers_ms}ms（含重试），本次选课 {}ms",
-        started.elapsed().as_millis()
-    );
+    if elec_session_time.is_none() {
+        let result = async {
+            let body = fetch_default_page(session, profile_id)
+                .await?
+                .error_for_status()?
+                .text()
+                .await
+                .context("读取 defaultPage 失败")?;
+            parse_elec_session_time(&body)
+        }
+        .await;
+        eprintln!(
+            "计时：defaultPage 完整响应及 token 解析 {}ms（含 GET 重试）{}",
+            started.elapsed().as_millis(),
+            if result.is_err() { "（失败）" } else { "" }
+        );
+        *elec_session_time = Some(result?);
+    }
+    let result = batch_operate(
+        session,
+        profile_id,
+        lesson_id,
+        elec_session_time.as_deref().expect("token fetched above"),
+        true,
+    )
+    .await;
+    if let Ok(body) = &result
+        && selection_session_expired(body)
+    {
+        // No hidden retry: the next allowed attempt will fetch a fresh token.
+        *elec_session_time = None;
+    }
+    eprintln!("计时：本次选课 {}ms", started.elapsed().as_millis());
     result
 }
 
@@ -398,22 +381,6 @@ pub(crate) async fn fetch_elected_lesson_ids(
         .await
         .context("读取 defaultPage 失败")?;
     Ok(parse_elected_ids(&body))
-}
-
-async fn refresh_or_load_counts(
-    session: Option<&Session>,
-    profile_id: &str,
-) -> Result<(Option<LessonCountSnapshot>, bool)> {
-    if let Some(session) = session
-        && fetch_default_page(session, profile_id).await.is_ok()
-        && let Ok(counts) = fetch_lesson_counts(session, profile_id).await
-    {
-        let snapshot = build_lesson_count_snapshot(profile_id, counts);
-        if save_count_snapshot(profile_id, &snapshot).is_ok() {
-            return Ok((Some(snapshot), false));
-        }
-    }
-    load_count_snapshot(profile_id).map(|snapshot| (Some(snapshot), true))
 }
 
 async fn fetch_lesson_mapping(session: &Session, profile_id: &str) -> Result<Vec<Lesson>> {

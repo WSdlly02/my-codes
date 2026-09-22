@@ -9,11 +9,12 @@ use std::time::Duration;
 
 use crate::app::cache::{
     clear_derived_caches, clear_login_state, list_count_cache_statuses,
-    list_mapping_cache_statuses, load_channel_cache, load_mapping_cache, load_saved_cookies,
+    list_mapping_cache_statuses, load_channel_cache, load_count_snapshot, load_mapping_cache,
+    load_saved_cookies,
 };
 use crate::app::http::{
     Session, drop_lesson, fetch_and_cache_channels, fetch_elected_lesson_ids, prewarm,
-    query_class_schedule_html, query_course_data, select_lesson,
+    query_class_schedule_html, refresh_course_data, select_lesson,
 };
 use crate::app::login::login;
 use crate::app::output::{
@@ -209,7 +210,7 @@ fn set_profile(state: &mut State, argument: &str) -> Result<()> {
 
 async fn run_refresh(state: &State) -> Result<()> {
     let profile = require_profile(state)?;
-    let data = query_course_data(Some(&state.session), profile).await?;
+    let data = refresh_course_data(&state.session, profile).await?;
     println!(
         "mapping={} counts={}{}",
         data.mapping.lessons.len(),
@@ -239,7 +240,9 @@ async fn run_find(state: &State, argument: &str) -> Result<()> {
     } else {
         (Some(value.to_string()), None, None)
     };
-    let data = query_course_data(Some(&state.session), profile).await?;
+    let mapping = load_mapping_cache(profile)
+        .with_context(|| format!("无法读取 profile={profile} 的课程缓存，请先执行 refresh"))?;
+    let counts = load_count_snapshot(profile).ok();
     let selected_lesson_ids = if selected_only {
         fetch_elected_lesson_ids(&state.session, profile).await?
     } else {
@@ -252,7 +255,7 @@ async fn run_find(state: &State, argument: &str) -> Result<()> {
         selected_only,
         selected_lesson_ids,
     };
-    let entries = build_lesson_display_entries(&data.mapping, data.counts.as_ref(), &filter);
+    let entries = build_lesson_display_entries(&mapping, counts.as_ref(), &filter);
     for (index, entry) in entries.iter().enumerate() {
         print!("{}", format_lesson_display_entry(index + 1, entry));
     }
@@ -282,7 +285,7 @@ async fn run_arm(
     readline: &mut Readline,
     writer: &mut SharedWriter,
 ) -> Result<()> {
-    let profile = require_profile(state)?;
+    require_profile(state)?;
     require_target(state)?;
     if argument.trim().is_empty() {
         println!("正在预热；按 Enter 或输入 fire 触发，输入 cancel 取消");
@@ -295,7 +298,7 @@ async fn run_arm(
                     biased;
                     event = &mut input => break event?,
                     result = async {
-                        report_prewarm(&state.session, profile, writer).await?;
+                        report_prewarm(&state.session, writer).await?;
                         tokio::time::sleep(Duration::from_secs(10)).await;
                         Ok::<(), anyhow::Error>(())
                     } => result?,
@@ -341,7 +344,7 @@ async fn run_arm(
         tokio::select! {
             biased;
             result = &mut wait => result?,
-            result = report_prewarm(&state.session, profile, writer) => {
+            result = report_prewarm(&state.session, writer) => {
                 result?;
                 wait.await?
             }
@@ -355,9 +358,9 @@ async fn run_arm(
     run_action(state, 1, Duration::from_millis(500), true).await
 }
 
-async fn report_prewarm(session: &Session, profile: &str, writer: &mut SharedWriter) -> Result<()> {
+async fn report_prewarm(session: &Session, writer: &mut SharedWriter) -> Result<()> {
     let started = std::time::Instant::now();
-    let result = prewarm(session, profile).await;
+    let result = prewarm(session).await;
     let elapsed = started.elapsed().as_millis();
     match result {
         Ok(()) => writeln!(writer, "预热完成：{elapsed}ms")?,
@@ -450,10 +453,12 @@ async fn run_action_inner(
     let profile = require_profile(state)?;
     let lesson = require_target(state)?;
     let mut attempt = 0usize;
+    // Never share a token across commands: refresh/find --selected can replace it.
+    let mut elec_session_time = None;
     loop {
         attempt += 1;
         let result = if select {
-            select_lesson(&state.session, profile, lesson).await
+            select_lesson(&state.session, profile, lesson, &mut elec_session_time).await
         } else {
             drop_lesson(&state.session, profile, lesson).await
         };

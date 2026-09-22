@@ -191,6 +191,39 @@ pub(crate) fn selection_succeeded(body: &str) -> bool {
     summarize_selection_response(body).contains("成功")
 }
 
+pub(crate) fn selection_session_expired(body: &str) -> bool {
+    summarize_selection_response(body).contains("同时打开多个选课页面，请至最新页面进行操作")
+}
+
+pub(crate) fn parse_elec_session_time(html: &str) -> Result<String> {
+    let input_re = Regex::new(r"(?is)<input\b[^>]*>").unwrap();
+    let attr_re = Regex::new(r#"(?is)\s(name|value)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap();
+    let mut token = None;
+    for input in input_re.find_iter(html) {
+        let mut name = None;
+        let mut value = None;
+        for attr in attr_re.captures_iter(input.as_str()) {
+            let text = attr.get(2).or_else(|| attr.get(3)).unwrap().as_str();
+            if attr[1].eq_ignore_ascii_case("name") {
+                name = Some(text);
+            } else {
+                value = Some(text);
+            }
+        }
+        if name != Some("elecSessionTime") {
+            continue;
+        }
+        let value = value.context("defaultPage 的 elecSessionTime 缺少 value")?;
+        if value.len() != 14 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            bail!("defaultPage 的 elecSessionTime 格式异常，拒绝猜测选课 token");
+        }
+        if token.replace(value.to_owned()).is_some() {
+            bail!("defaultPage 含重复 elecSessionTime，拒绝提交");
+        }
+    }
+    token.context("defaultPage 缺少 elecSessionTime，可能未开放、登录失效或返回错误页")
+}
+
 pub(crate) fn clean_html(input: &str) -> String {
     let tag_re = Regex::new(r"<[^>]+>").unwrap();
     let mut text = input.replace("<br/>", "\n").replace("<br>", "\n");
@@ -320,6 +353,44 @@ mod tests {
         summarize_selection_response,
     };
     use crate::model::Lesson;
+
+    #[test]
+    fn election_token_comes_from_input_value() {
+        for html in [
+            r#"<input type="hidden" id="elecSessionTime" name="elecSessionTime" value="20260922125615" />"#,
+            "<INPUT VALUE = '20260922125615'\n NAME = 'elecSessionTime'>",
+        ] {
+            assert_eq!(
+                super::parse_elec_session_time(html).unwrap(),
+                "20260922125615"
+            );
+        }
+    }
+
+    #[test]
+    fn election_token_rejects_missing_malformed_or_ambiguous_fields() {
+        for html in [
+            "<html>登录失效</html>",
+            "<input name='elecSessionTime'>",
+            "<input name='elecSessionTime' value=''>",
+            "<input name='elecSessionTime' value='undefined'>",
+            "<input name='elecSessionTime' value='2026092212561x'>",
+            "<input data-name='elecSessionTime' value='20260922125615'>",
+            "<input name='elecSessionTime' value='20260922125615'><input name='elecSessionTime' value='20260922125616'>",
+        ] {
+            assert!(super::parse_elec_session_time(html).is_err(), "{html}");
+        }
+    }
+
+    #[test]
+    fn only_explicit_latest_page_rejection_invalidates_token() {
+        assert!(super::selection_session_expired(
+            r#"<div style="margin:auto;">选课失败:同时打开多个选课页面，请至最新页面进行操作</br></div>"#
+        ));
+        for body in ["选课失败:人数已满", "选课成功", "", "Internal Server Error"] {
+            assert!(!super::selection_session_expired(body));
+        }
+    }
 
     #[test]
     fn single_quote_js_is_normalized() {

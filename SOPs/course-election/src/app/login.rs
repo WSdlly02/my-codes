@@ -16,6 +16,8 @@ use crate::app::support::{BASE_URL, DEFAULT_OCR_MODEL, DEFAULT_OLLAMA_URL};
 
 const CAS_HOST: &str = "sso.shmtu.edu.cn";
 const JWXT_HOST: &str = "jwxt.shmtu.edu.cn";
+const GATEWAY_HOST: &str = "ng.shmtu.edu.cn";
+const MAX_REDIRECTS: usize = 10;
 const CAPTCHA_ATTEMPTS: usize = 3;
 
 #[derive(Deserialize)]
@@ -28,29 +30,17 @@ struct CaptchaChallenge {
 
 pub(crate) async fn login(username: &str, password: &str) -> Result<Session> {
     let session = Session::empty()?;
-    let home = session
-        .client()
-        .get(format!("{BASE_URL}/home.action"))
-        .send()
-        .await
-        .context("请求教务系统入口失败")?;
-    let cas_url = checked_location(home.url(), home.headers().get(LOCATION))?;
-    validate_cas_login_url(&cas_url)?;
-
-    let mut page_url = cas_url;
-    let mut page = session
-        .client()
-        .get(page_url.clone())
-        .header(REFERER, format!("{BASE_URL}/home.action"))
-        .send()
-        .await
-        .context("请求 CAS 登录页失败")?
-        .text()
-        .await
-        .context("读取 CAS 登录页失败")?;
+    let mut redirects = 0;
+    let (mut page_url, mut page) = fetch_login_page(
+        &session,
+        Url::parse(&format!("{BASE_URL}/home.action"))?,
+        &mut redirects,
+    )
+    .await?;
 
     for attempt in 1..=CAPTCHA_ATTEMPTS {
-        let action = page_url.join(&form_action(&page)?)?;
+        let service = validate_cas_login_url(&page_url)?;
+        let action = checked_url(page_url.join(&form_action(&page)?)?)?;
         if action.scheme() != "https"
             || action.host_str() != Some(CAS_HOST)
             || action.path() != "/cas/login"
@@ -83,6 +73,7 @@ pub(crate) async fn login(username: &str, password: &str) -> Result<Session> {
             .form(&form)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .context("提交 CAS 登录表单失败")?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -95,40 +86,20 @@ pub(crate) async fn login(username: &str, password: &str) -> Result<Session> {
             bail!("CAS 返回 {status}，响应已保存到 {}", path.display());
         }
         let location = checked_location(response.url(), response.headers().get(LOCATION))?;
+        count_redirect(&mut redirects)?;
         if is_captcha_rejection(&location) {
             if attempt == CAPTCHA_ATTEMPTS {
                 bail!("验证码连续 {CAPTCHA_ATTEMPTS} 次识别错误");
             }
             eprintln!("验证码识别错误，正在刷新（{attempt}/{CAPTCHA_ATTEMPTS}）");
-            page_url = location;
-            page = session
-                .client()
-                .get(page_url.clone())
-                .send()
-                .await?
-                .text()
-                .await?;
+            (page_url, page) = fetch_login_page(&session, location, &mut redirects).await?;
             continue;
         }
-        validate_ticket_callback(&location)?;
-        let callback_response = session
-            .client()
-            .get(location)
-            .send()
-            .await
-            .map_err(reqwest::Error::without_url)
-            .context("请求教务 ticket 回调失败")?;
-        if !callback_response.status().is_success()
-            || callback_response.url().host_str() != Some(JWXT_HOST)
-            || !is_home_path(callback_response.url().path())
-        {
-            bail!(
-                "认证回调未到达教务首页: {} {}",
-                callback_response.status(),
-                safe_url(callback_response.url())
-            );
+        validate_ticket_callback(&location, &service)?;
+        let (final_url, _) = fetch_login_page(&session, location, &mut redirects).await?;
+        if final_url.host_str() != Some(JWXT_HOST) || !is_home_path(final_url.path()) {
+            bail!("认证回调未到达教务首页: {}", safe_url(&final_url));
         }
-        callback_response.bytes().await.ok();
         if !session.is_session_valid().await {
             bail!("CAS 已返回 ticket，但教务系统登录态验证失败");
         }
@@ -136,6 +107,77 @@ pub(crate) async fn login(username: &str, password: &str) -> Result<Session> {
         return Ok(session);
     }
     unreachable!()
+}
+
+fn count_redirect(count: &mut usize) -> Result<()> {
+    if *count >= MAX_REDIRECTS {
+        bail!("登录跳转超过 {MAX_REDIRECTS} 次");
+    }
+    *count += 1;
+    Ok(())
+}
+
+async fn fetch_login_page(
+    session: &Session,
+    url: Url,
+    redirects: &mut usize,
+) -> Result<(Url, String)> {
+    let mut url = checked_url(url)?;
+    loop {
+        let service = if url.host_str() == Some(CAS_HOST) {
+            Some(validate_cas_login_url(&url)?)
+        } else {
+            None
+        };
+        let response = session
+            .client()
+            .get(url.clone())
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| format!("请求登录页面失败: {}", safe_url(&url)))?;
+        if response.status().is_redirection() {
+            let next = checked_location(&url, response.headers().get(LOCATION))?;
+            if let Some(service) = service
+                && !is_captcha_rejection(&next)
+            {
+                validate_ticket_callback(&next, &service)?;
+            }
+            count_redirect(redirects)?;
+            response
+                .bytes()
+                .await
+                .map_err(reqwest::Error::without_url)?;
+            url = next;
+            continue;
+        }
+        let status = response.status();
+        let body = response.text().await.map_err(reqwest::Error::without_url)?;
+        if let Some(reason) = login_page_error(status, &body) {
+            let path = write_temp_file("login-error", "html", body.as_bytes())?;
+            bail!(
+                "{reason}: {status} {}，响应已保存到 {}",
+                safe_url(&url),
+                path.display()
+            );
+        }
+        return Ok((url, body));
+    }
+}
+
+fn login_page_error(status: reqwest::StatusCode, body: &str) -> Option<&'static str> {
+    if body.contains("SSLHandshakeException") {
+        Some(
+            "服务端认证链路 TLS 握手失败（教务回调阶段为校验 CAS 失败），非本地密码或 TLS 配置错误",
+        )
+    } else if !status.is_success()
+        || body.contains("服务器内部错误")
+        || body.contains("class=\"actionError\"")
+    {
+        Some("登录页面返回服务端错误")
+    } else {
+        None
+    }
 }
 
 fn is_home_path(path: &str) -> bool {
@@ -234,29 +276,50 @@ fn write_temp_file(kind: &str, extension: &str, body: &[u8]) -> Result<PathBuf> 
     Ok(path)
 }
 
-fn validate_cas_login_url(url: &Url) -> Result<()> {
+fn validate_cas_login_url(url: &Url) -> Result<Url> {
     if url.scheme() != "https" || url.host_str() != Some(CAS_HOST) || url.path() != "/cas/login" {
         bail!("教务入口未跳转到预期 CAS 登录页");
     }
-    let service = url
+    let services: Vec<_> = url
         .query_pairs()
-        .find_map(|(key, value)| (key == "service").then(|| value.into_owned()))
-        .ok_or_else(|| anyhow!("CAS URL 缺少 service"))?;
-    let service = checked_location(url, Some(&service.parse()?))?;
-    if service.host_str() != Some(JWXT_HOST) || !is_home_path(service.path()) {
-        bail!("CAS service 未指向教务首页");
+        .filter(|(key, _)| key == "service")
+        .collect();
+    if services.len() != 1 {
+        bail!("CAS URL 必须包含唯一 service");
     }
-    Ok(())
+    let service = checked_url(Url::parse(&services[0].1)?)?;
+    let gateway = service.host_str() == Some(GATEWAY_HOST)
+        && service.path() == "/wengine-auth/login"
+        && service.query() == Some("cas_login=true");
+    let home = service.host_str() == Some(JWXT_HOST)
+        && is_home_path(service.path())
+        && service.query().is_none();
+    if !gateway && !home {
+        bail!("CAS service 未指向已知认证回调: {}", safe_url(&service));
+    }
+    Ok(service)
 }
 
-fn validate_ticket_callback(url: &Url) -> Result<()> {
-    if url.host_str() != Some(JWXT_HOST)
-        || !is_home_path(url.path())
-        || !url
-            .query_pairs()
-            .any(|(key, value)| key == "ticket" && !value.is_empty())
-    {
-        bail!("CAS 成功响应缺少预期 ticket 回调");
+fn validate_ticket_callback(url: &Url, service: &Url) -> Result<()> {
+    let mut callback = checked_url(url.clone())?;
+    let tickets: Vec<_> = callback
+        .query_pairs()
+        .filter(|(k, _)| k == "ticket")
+        .collect();
+    if tickets.len() != 1 || tickets[0].1.is_empty() {
+        bail!("CAS 成功响应缺少唯一有效 ticket");
+    }
+    let pairs: Vec<_> = callback
+        .query_pairs()
+        .filter(|(k, _)| k != "ticket")
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    callback.set_query(None);
+    if !pairs.is_empty() {
+        callback.query_pairs_mut().extend_pairs(pairs);
+    }
+    if callback != *service {
+        bail!("CAS ticket 回调与本次 service 不匹配: {}", safe_url(url));
     }
     Ok(())
 }
@@ -271,7 +334,10 @@ fn checked_location(base: &Url, location: Option<&reqwest::header::HeaderValue>)
     let location = location
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| anyhow!("响应缺少 Location"))?;
-    let mut url = base.join(location)?;
+    checked_url(base.join(location)?)
+}
+
+fn checked_url(mut url: Url) -> Result<Url> {
     // JWXT's own CAS service still emits HTTP ticket callbacks; send them over TLS.
     if url.scheme() == "http" && url.host_str() == Some(JWXT_HOST) && is_home_path(url.path()) {
         url.set_scheme("https")
@@ -279,20 +345,18 @@ fn checked_location(base: &Url, location: Option<&reqwest::header::HeaderValue>)
     }
     let allowed_path = match url.host_str() {
         Some(CAS_HOST) => url.path() == "/cas/login",
-        Some(JWXT_HOST) => is_home_path(url.path()),
+        Some(GATEWAY_HOST) => url.path() == "/wengine-auth/login",
+        Some(JWXT_HOST) => is_home_path(url.path()) || url.path() == "/wengine-auth/token-login",
         _ => false,
     };
     if url.scheme() != "https"
         || url.port_or_known_default() != Some(443)
         || !url.username().is_empty()
         || url.password().is_some()
+        || url.fragment().is_some()
         || !allowed_path
     {
-        bail!(
-            "拒绝跟随非预期登录跳转: {} -> {}",
-            safe_url(base),
-            safe_url(&url)
-        );
+        bail!("拒绝跟随非预期登录跳转: {}", safe_url(&url));
     }
     Ok(url)
 }
@@ -357,6 +421,8 @@ mod tests {
     fn current_cas_routes_and_rejections() {
         let base = Url::parse("https://jwxt.shmtu.edu.cn/shmtu/home.action").unwrap();
         for target in [
+            "https://ng.shmtu.edu.cn/wengine-auth/login?id=170",
+            "https://jwxt.shmtu.edu.cn/wengine-auth/token-login?wengine-ticket=opaque",
             "https://sso.shmtu.edu.cn/cas/login?service=opaque",
             "http://jwxt.shmtu.edu.cn/shmtu/home.action;jsessionid=opaque?ticket=opaque",
         ] {
@@ -365,8 +431,6 @@ mod tests {
         }
         for target in [
             "https://example.com/",
-            "https://ng.shmtu.edu.cn/wengine-auth/login?id=170",
-            "https://jwxt.shmtu.edu.cn/wengine-auth/token-login?wengine-ticket=opaque",
             "http://ng.shmtu.edu.cn/wengine-auth/login",
             "https://ng.shmtu.edu.cn/other",
             "https://jwxt.shmtu.edu.cn/shmtu/home.action.evil",
@@ -375,12 +439,13 @@ mod tests {
             assert!(checked_location(&base, Some(&target.parse().unwrap())).is_err());
         }
         let cas = Url::parse("https://sso.shmtu.edu.cn/cas/login?service=http%3A%2F%2Fjwxt.shmtu.edu.cn%2Fshmtu%2Fhome.action%3Bjsessionid%3Dopaque").unwrap();
-        validate_cas_login_url(&cas).unwrap();
+        let service = validate_cas_login_url(&cas).unwrap();
         validate_ticket_callback(
             &Url::parse(
                 "https://jwxt.shmtu.edu.cn/shmtu/home.action;jsessionid=opaque?ticket=opaque",
             )
             .unwrap(),
+            &service,
         )
         .unwrap();
         assert!(
@@ -388,9 +453,70 @@ mod tests {
                 &Url::parse(
                     "https://ng.shmtu.edu.cn/wengine-auth/login?cas_login=true&ticket=opaque"
                 )
-                .unwrap()
+                .unwrap(),
+                &service,
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn gateway_service_and_callback_must_match() {
+        let mut cas = Url::parse("https://sso.shmtu.edu.cn/cas/login").unwrap();
+        cas.query_pairs_mut().append_pair(
+            "service",
+            "https://ng.shmtu.edu.cn/wengine-auth/login?cas_login=true",
+        );
+        let service = validate_cas_login_url(&cas).unwrap();
+        validate_ticket_callback(
+            &Url::parse("https://ng.shmtu.edu.cn/wengine-auth/login?ticket=secret&cas_login=true")
+                .unwrap(),
+            &service,
+        )
+        .unwrap();
+        for bad in [
+            "https://ng.shmtu.edu.cn/wengine-auth/login?cas_login=false&ticket=secret",
+            "https://jwxt.shmtu.edu.cn/shmtu/home.action?ticket=secret",
+            "https://ng.shmtu.edu.cn/wengine-auth/login?cas_login=true&ticket=",
+            "https://ng.shmtu.edu.cn/wengine-auth/login?cas_login=true&ticket=a&ticket=b",
+        ] {
+            assert!(validate_ticket_callback(&Url::parse(bad).unwrap(), &service).is_err());
+        }
+        cas.query_pairs_mut()
+            .append_pair("service", "https://example.com/");
+        assert!(validate_cas_login_url(&cas).is_err());
+        let mut count = 0;
+        for _ in 0..MAX_REDIRECTS {
+            count_redirect(&mut count).unwrap();
+        }
+        assert!(count_redirect(&mut count).is_err());
+    }
+
+    #[test]
+    fn detects_server_tls_failure_even_with_http_200() {
+        for status in [
+            reqwest::StatusCode::OK,
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            assert!(
+                login_page_error(
+                    status,
+                    "javax.net.ssl.SSLHandshakeException: Received fatal alert: handshake_failure"
+                )
+                .unwrap()
+                .contains("TLS")
+            );
+        }
+        assert!(login_page_error(reqwest::StatusCode::OK, "服务器内部错误").is_some());
+        assert!(login_page_error(reqwest::StatusCode::OK, "normal page").is_none());
+        assert_eq!(
+            safe_url(
+                &Url::parse(
+                    "https://jwxt.shmtu.edu.cn/shmtu/home.action;jsessionid=secret?ticket=secret"
+                )
+                .unwrap()
+            ),
+            "https://jwxt.shmtu.edu.cn/shmtu/home.action"
         );
     }
 
