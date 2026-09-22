@@ -13,9 +13,8 @@ use crate::app::cache::{
     load_saved_cookies,
 };
 use crate::app::http::{
-    ElectionContext, Session, fetch_and_cache_channels, fetch_elected_lesson_ids,
-    fetch_lesson_counts, prewarm, query_class_schedule_html, refresh_course_data,
-    transient_request_error,
+    Session, fetch_and_cache_channels, fetch_elected_lesson_ids, prewarm,
+    query_class_schedule_html, refresh_course_data, transient_request_error,
 };
 use crate::app::login::login;
 use crate::app::output::{
@@ -30,6 +29,13 @@ struct State {
     session: Session,
     profile_id: Option<String>,
     lesson_id: Option<String>,
+}
+
+impl State {
+    /// 登录 / 清除登录态：会话换了，之前打开的页面随之失效。
+    fn reset_session(&mut self, session: Session) {
+        self.session = session;
+    }
 }
 
 const PROMPT: &str = "course-election> ";
@@ -82,14 +88,14 @@ pub(crate) async fn run() -> Result<()> {
             "status" => run_status(&state).await,
             "channels" => run_channels(&state).await,
             "profile" => set_profile(&mut state, argument),
-            "refresh" => run_refresh(&state).await,
-            "find" => run_find(&state, argument).await,
+            "refresh" => run_refresh(&mut state).await,
+            "find" => run_find(&mut state, argument).await,
             "target" => set_target(&mut state, argument),
             "export-schedule" => run_export_schedule(&state, argument).await,
-            "arm" => run_arm(&state, argument, &mut readline, &mut writer).await,
-            "watch" => run_watch(&state, argument).await,
-            "fire" => run_fire_command(&state, argument).await,
-            "drop" => run_drop_command(&state, argument).await,
+            "arm" => run_arm(&mut state, argument, &mut readline, &mut writer).await,
+            "watch" => run_watch(&mut state, argument).await,
+            "fire" => run_fire_command(&mut state, argument).await,
+            "drop" => run_drop_command(&mut state, argument).await,
             "clear" => run_clear(&mut state, argument),
             "quit" | "exit" => break,
             _ => Err(anyhow!("未知命令，输入 help 查看用法")),
@@ -142,7 +148,8 @@ async fn run_login(state: &mut State, argument: &str) -> Result<()> {
     if password.is_empty() {
         bail!("密码不能为空");
     }
-    state.session = login(username, &password).await?;
+    let session = login(username, &password).await?;
+    state.reset_session(session);
     println!("登录成功");
     Ok(())
 }
@@ -208,13 +215,15 @@ fn set_profile(state: &mut State, argument: &str) -> Result<()> {
     }
     state.profile_id = Some(value.to_string());
     state.lesson_id = None;
+    // 页面属于轮次：换 profile 就不该复用旧页面。
+    state.session.invalidate_election();
     println!("profile={value}");
     Ok(())
 }
 
-async fn run_refresh(state: &State) -> Result<()> {
-    let profile = require_profile(state)?;
-    let data = refresh_course_data(&state.session, profile).await?;
+async fn run_refresh(state: &mut State) -> Result<()> {
+    let profile = require_profile(state)?.to_string();
+    let data = refresh_course_data(&mut state.session, &profile).await?;
     println!(
         "mapping={} counts={}{}",
         data.mapping.lessons.len(),
@@ -228,8 +237,8 @@ async fn run_refresh(state: &State) -> Result<()> {
     Ok(())
 }
 
-async fn run_find(state: &State, argument: &str) -> Result<()> {
-    let profile = require_profile(state)?;
+async fn run_find(state: &mut State, argument: &str) -> Result<()> {
+    let profile = require_profile(state)?.to_string();
     let mut value = argument.trim();
     let selected_only = value == "--selected" || value.starts_with("--selected ");
     if selected_only {
@@ -244,11 +253,11 @@ async fn run_find(state: &State, argument: &str) -> Result<()> {
     } else {
         (Some(value.to_string()), None, None)
     };
-    let mapping = load_mapping_cache(profile)
+    let mapping = load_mapping_cache(&profile)
         .with_context(|| format!("无法读取 profile={profile} 的课程缓存，请先执行 refresh"))?;
-    let counts = load_count_snapshot(profile).ok();
+    let counts = load_count_snapshot(&profile).ok();
     let selected_lesson_ids = if selected_only {
-        fetch_elected_lesson_ids(&state.session, profile).await?
+        fetch_elected_lesson_ids(&mut state.session, &profile).await?
     } else {
         HashMap::new()
     };
@@ -284,7 +293,7 @@ fn set_target(state: &mut State, argument: &str) -> Result<()> {
 }
 
 async fn run_arm(
-    state: &State,
+    state: &mut State,
     argument: &str,
     readline: &mut Readline,
     writer: &mut SharedWriter,
@@ -348,7 +357,15 @@ async fn run_arm(
         tokio::select! {
             biased;
             result = &mut wait => result?,
-            result = report_prewarm(&state.session, writer) => {
+            result = async {
+                report_prewarm(&state.session, writer).await?;
+                // Prepare early, reusing an existing page when available.
+                let profile = require_profile(state)?.to_string();
+                if let Err(error) = state.session.prepare_election(&profile).await {
+                    eprintln!("提前准备页面失败：{error:#}；仍在目标时间尝试");
+                }
+                Ok::<(), anyhow::Error>(())
+            } => {
                 result?;
                 wait.await?
             }
@@ -359,7 +376,8 @@ async fn run_arm(
     }
     let lateness = Utc::now().signed_duration_since(target).num_milliseconds();
     eprintln!("计时：定时触发偏差 {lateness:+}ms（本地时钟）");
-    run_action(state, 1, Duration::from_millis(500), true).await
+    // Keep the chosen two-attempt scheduling policy; the protocol layer never replays POSTs.
+    run_action(state, 2, Duration::from_millis(500), true).await
 }
 
 async fn report_prewarm(session: &Session, writer: &mut SharedWriter) -> Result<()> {
@@ -376,15 +394,15 @@ async fn report_prewarm(session: &Session, writer: &mut SharedWriter) -> Result<
 /// 事件驱动捡漏：只读地轮询名额快照，出现空位才走一次写入链路。
 ///
 /// 初始化选课上下文后轮询 `queryStdCount.action`；有空位才调用共享提交链路。
-async fn run_watch(state: &State, argument: &str) -> Result<()> {
+async fn run_watch(state: &mut State, argument: &str) -> Result<()> {
     let result = run_watch_inner(state, argument).await;
     persist_action_cookies(&state.session);
     result
 }
 
-async fn run_watch_inner(state: &State, argument: &str) -> Result<()> {
-    let profile = require_profile(state)?;
-    let lesson = require_target(state)?;
+async fn run_watch_inner(state: &mut State, argument: &str) -> Result<()> {
+    let profile = require_profile(state)?.to_string();
+    let lesson = require_target(state)?.to_string();
 
     let mut interval = Duration::from_secs(5);
     let mut timeout = Some(Duration::from_secs(1800));
@@ -430,26 +448,28 @@ async fn run_watch_inner(state: &State, argument: &str) -> Result<()> {
                 .context("监视超时时间过大")
         })
         .transpose()?;
-    let mut election = ElectionContext::new(&state.session, profile, deadline);
-    // Establish the query context once; refresh only after an explicit stale-token rejection.
+    // 先确保存在一个可用的选课页面（它也是后续只读轮询的服务端上下文）。
     loop {
         if watch_expired(deadline) {
             return Ok(());
         }
-        match election.prepare().await {
-            Ok(()) => break,
+        match ensure_page_within(state, deadline).await {
+            Ok(Some(())) => {
+                println!("[{}] 选课上下文就绪", format_time(now_fixed()));
+                break;
+            }
+            Ok(None) => {
+                watch_expired(deadline);
+                return Ok(());
+            }
             Err(_) if watch_expired(deadline) => return Ok(()),
             Err(error) if transient_request_error(&error) => {
-                println!("建立选课上下文暂时失败：{error:#}；继续等待");
+                println!("打开选课页面暂时失败：{error:#}；继续等待");
                 watch_sleep(interval, deadline).await;
             }
             Err(error) => return Err(error),
         }
     }
-    println!(
-        "[{}] 已建立课选上下文并取得 token",
-        format_time(now_fixed())
-    );
 
     let mut last: Option<(i64, i64, i64)> = None;
     let mut rounds = 0usize;
@@ -459,7 +479,7 @@ async fn run_watch_inner(state: &State, argument: &str) -> Result<()> {
             return Ok(());
         }
         rounds += 1;
-        let query = fetch_lesson_counts(&state.session, profile);
+        let query = state.session.lesson_counts(&profile);
         let result = match deadline {
             Some(deadline) => match tokio::time::timeout_at(deadline, query).await {
                 Ok(result) => result,
@@ -482,7 +502,7 @@ async fn run_watch_inner(state: &State, argument: &str) -> Result<()> {
             }
             Err(error) => return Err(error),
         };
-        let Some(count) = counts.get(lesson) else {
+        let Some(count) = counts.get(&lesson) else {
             println!(
                 "[{}] 第 {rounds} 轮：{lesson} 不在本轮名额快照里（轮次可能已切换）",
                 format_time(now_fixed())
@@ -528,7 +548,11 @@ async fn run_watch_inner(state: &State, argument: &str) -> Result<()> {
                 );
             } else {
                 println!("[{}] 空位 {vacancy}，出手选课", format_time(now_fixed()));
-                match election.submit(lesson, true).await {
+                match state
+                    .session
+                    .submit_lesson(&profile, &lesson, true, deadline)
+                    .await
+                {
                     Ok(body) => {
                         let message = summarize_selection_response(&body);
                         println!("[{}] {message}", format_time(now_fixed()));
@@ -548,6 +572,23 @@ async fn run_watch_inner(state: &State, argument: &str) -> Result<()> {
         }
 
         watch_sleep(interval, deadline).await;
+    }
+}
+
+/// 在监视截止时间内确保页面可用；被截止时间打断时返回 `Ok(None)`。
+async fn ensure_page_within(
+    state: &mut State,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<Option<()>> {
+    let profile = require_profile(state)?.to_string();
+    match deadline {
+        Some(limit) => {
+            match tokio::time::timeout_at(limit, state.session.prepare_election(&profile)).await {
+                Ok(result) => Ok(Some(result?)),
+                Err(_) => Ok(None),
+            }
+        }
+        None => Ok(Some(state.session.prepare_election(&profile).await?)),
     }
 }
 
@@ -608,12 +649,12 @@ async fn wait_until_or_cancel(
     }
 }
 
-async fn run_fire_command(state: &State, argument: &str) -> Result<()> {
+async fn run_fire_command(state: &mut State, argument: &str) -> Result<()> {
     let (attempts, interval) = parse_retry_args(argument)?;
     run_action(state, attempts, interval, true).await
 }
 
-async fn run_drop_command(state: &State, argument: &str) -> Result<()> {
+async fn run_drop_command(state: &mut State, argument: &str) -> Result<()> {
     let (attempts, interval) = parse_retry_args(argument)?;
     run_action(state, attempts, interval, false).await
 }
@@ -629,7 +670,7 @@ fn parse_retry_args(argument: &str) -> Result<(usize, Duration)> {
 }
 
 async fn run_action(
-    state: &State,
+    state: &mut State,
     attempts: usize,
     interval: Duration,
     select: bool,
@@ -646,19 +687,20 @@ fn persist_action_cookies(session: &Session) {
 }
 
 async fn run_action_inner(
-    state: &State,
+    state: &mut State,
     attempts: usize,
     interval: Duration,
     select: bool,
 ) -> Result<()> {
-    let profile = require_profile(state)?;
-    let lesson = require_target(state)?;
+    let lesson = require_target(state)?.to_string();
+    let profile = require_profile(state)?.to_string();
     let mut attempt = 0usize;
-    // Never share a token across commands: refresh/find --selected can replace it.
-    let mut election = ElectionContext::new(&state.session, profile, None);
     loop {
         attempt += 1;
-        let result = election.submit(lesson, select).await;
+        let result = state
+            .session
+            .submit_lesson(&profile, &lesson, select, None)
+            .await;
         match result {
             Ok(body) => {
                 println!("[{attempt}] {}", summarize_selection_response(&body));
@@ -682,7 +724,7 @@ fn run_clear(state: &mut State, argument: &str) -> Result<()> {
         _ => bail!("用法：clear [all]"),
     };
     clear_login_state()?;
-    state.session = Session::empty()?;
+    state.reset_session(Session::empty()?);
     println!("已清除登录状态");
     if all {
         clear_derived_caches()?;

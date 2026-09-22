@@ -218,7 +218,8 @@ def main():
             wait("第 1 轮", mark)
             proxy.mode = "vacant"
             prompt_after("达到最长等待时间", mark)
-            assert [e[1] for e in proxy.log[before:]] == ["defaultPage", "queryStdCount"]
+            # 页面在上一个用例里已打开，这里直接复用：不再有 defaultPage。
+            assert [e[1] for e in proxy.log[before:]] == ["queryStdCount"]
             print("PASS: 轮询间隔超过剩余时间时，不越过截止时间提交")
 
             # Slow count response would show vacancy only after the deadline.
@@ -235,18 +236,24 @@ def main():
             mark, before = start_watch("watch 1 8")
             wait("名额查询暂时失败", mark)
             prompt_after("已命中", mark)
-            assert [e[1] for e in proxy.log[before:]].count("defaultPage") == 1
+            assert [e[1] for e in proxy.log[before:]].count("defaultPage") == 0
             assert [e[1] for e in proxy.log[before:]].count("batchOperator") == 1
             print("PASS: 临时查询错误耗尽 GET 重试后继续监视并恢复")
 
             proxy.query_status, proxy.query_failures = 401, 1
             mark, before = start_watch("watch 1 8")
             prompt_after("错误：", mark)
-            assert [e[1] for e in proxy.log[before:]] == ["defaultPage", "queryStdCount"]
+            assert [e[1] for e in proxy.log[before:]] == ["queryStdCount"]
             proxy.query_status = 503
             print("PASS: 明确认证错误退出，不盲目重试")
 
             # Initial defaultPage is part of the same total deadline.
+            # 先换轮次作废已打开的页面，使本次 watch 必须重新打开（并故意让打开很慢）。
+            for cmd, expect in (("profile 3113", "profile=3113"), ("profile 3112", "profile=3112"),
+                                (f"target {LESSON}", f"target={LESSON}")):
+                mark = len(output)
+                os.write(master, (cmd + "\r").encode())
+                prompt_after(expect, mark)
             proxy.page_delay = 2
             mark, before = start_watch("watch 1 1")
             prompt_after("达到最长等待时间", mark)

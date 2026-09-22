@@ -131,10 +131,10 @@ enum CookieUpdate {
     },
 }
 
-#[derive(Clone)]
 pub(crate) struct Session {
     client: Client,
     jar: Arc<PersistedCookieJar>,
+    election: Option<ElectionPage>,
 }
 
 impl Session {
@@ -150,7 +150,11 @@ impl Session {
             .cookie_provider(jar.clone())
             .build()
             .context("构建 HTTP 客户端失败")?;
-        Ok(Self { client, jar })
+        Ok(Self {
+            client,
+            jar,
+            election: None,
+        })
     }
 
     pub(crate) fn empty() -> Result<Self> {
@@ -256,12 +260,12 @@ pub(crate) async fn fetch_and_cache_channels(session: &Session) -> Result<Vec<Ch
     Ok(channels)
 }
 
-pub(crate) async fn refresh_course_data(session: &Session, profile_id: &str) -> Result<CourseData> {
-    fetch_default_page(session, profile_id)
-        .await?
-        .bytes()
-        .await
-        .ok();
+pub(crate) async fn refresh_course_data(
+    session: &mut Session,
+    profile_id: &str,
+) -> Result<CourseData> {
+    // Commit the new page before any subsequent data/cache operation can fail.
+    session.reload_page(profile_id).await?;
 
     let (lessons, counts) = tokio::join!(
         fetch_lesson_mapping(session, profile_id),
@@ -309,75 +313,109 @@ pub(crate) async fn prewarm(session: &Session) -> Result<()> {
     Ok(())
 }
 
-/// Command-scoped server context. Never shared across profile changes or REPL commands.
-pub(crate) struct ElectionContext<'a> {
-    session: &'a Session,
-    profile_id: &'a str,
-    token: Option<String>,
-    deadline: Option<tokio::time::Instant>,
+/// 一个"已打开的选课页面"，对应浏览器里的 `defaultPage` 标签页。
+///
+/// 它同时提供两样东西：**选课上下文**（所有 `batchOperator` 写操作的前置，缺少它会 500/NPE）
+/// 和 `elecSessionTime`（`select` 提交时服务端校验的 token；token 本身就是页面渲染的时刻）。
+///
+/// 唯一权威的复用/失效规则：
+/// - 轮次（profile）不同 ⇒ 不是同一个页面，不复用；
+/// - 我们自己重新渲染了 `defaultPage`（refresh / find --selected / 打开新页面）⇒ 页面翻新，旧 token 作废；
+/// - 服务端明确回"同时打开多个选课页面" ⇒ 作废，下次自动重开。
+struct ElectionPage {
+    profile_id: String,
+    token: String,
+    opened_at: Instant,
 }
 
-impl<'a> ElectionContext<'a> {
-    pub(crate) fn new(
-        session: &'a Session,
-        profile_id: &'a str,
-        deadline: Option<tokio::time::Instant>,
-    ) -> Self {
-        Self {
-            session,
-            profile_id,
-            token: None,
-            deadline,
-        }
+impl Session {
+    pub(crate) fn invalidate_election(&mut self) {
+        self.election = None;
     }
 
-    pub(crate) async fn prepare(&mut self) -> Result<()> {
-        if self.token.is_some() {
+    // The sole defaultPage request + state transition. Invalid before the first await,
+    // so errors and cancellation cannot leave a locally stale page behind.
+    async fn reload_page(&mut self, profile_id: &str) -> Result<String> {
+        self.invalidate_election();
+        let started = Instant::now();
+        let url = format!(
+            "{BASE_URL}/stdElectCourse!defaultPage.action?electionProfile.id={}",
+            urlencoding(profile_id)
+        );
+        let response = self.get_with_retry(&url, HeaderMap::new(), None).await?;
+        reject_redirect(&response, "defaultPage")?;
+        let body = response
+            .error_for_status()?
+            .text()
+            .await
+            .context("读取 defaultPage 失败")?;
+        let token = parse_elec_session_time(&body)?;
+        self.election = Some(ElectionPage {
+            profile_id: profile_id.into(),
+            token,
+            opened_at: Instant::now(),
+        });
+        eprintln!(
+            "计时：打开选课页面 {}ms（含 GET 重试）",
+            started.elapsed().as_millis()
+        );
+        Ok(body)
+    }
+
+    pub(crate) async fn prepare_election(&mut self, profile_id: &str) -> Result<()> {
+        if let Some(page) = &self.election
+            && page.profile_id == profile_id
+        {
+            eprintln!(
+                "复用已打开的选课页面（age {:.1}s）",
+                page.opened_at.elapsed().as_secs_f64()
+            );
             return Ok(());
         }
-        let started = Instant::now();
-        let result = match self.deadline {
-            Some(deadline) => tokio::time::timeout_at(
-                deadline,
-                fetch_election_token(self.session, self.profile_id),
-            )
-            .await
-            .context("已达到监视截止时间，停止获取选课上下文")?,
-            None => fetch_election_token(self.session, self.profile_id).await,
-        };
-        eprintln!(
-            "计时：defaultPage 完整响应及 token 解析 {}ms（含 GET 重试）{}",
-            started.elapsed().as_millis(),
-            if result.is_err() { "（失败）" } else { "" }
-        );
-        self.token = Some(result?);
+        self.reload_page(profile_id).await?;
         Ok(())
     }
 
-    pub(crate) async fn submit(&mut self, lesson_id: &str, select: bool) -> Result<String> {
+    pub(crate) async fn lesson_counts(
+        &mut self,
+        profile_id: &str,
+    ) -> Result<HashMap<String, LessonCount>> {
+        self.prepare_election(profile_id).await?;
+        fetch_lesson_counts(self, profile_id).await
+    }
+
+    pub(crate) async fn submit_lesson(
+        &mut self,
+        profile_id: &str,
+        lesson_id: &str,
+        select: bool,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<String> {
         let started = Instant::now();
-        if select {
-            self.prepare().await?;
-        }
-        // Check after prepare too: a token refresh can consume the remaining budget.
-        if self
-            .deadline
-            .is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
-        {
-            bail!("已达到监视截止时间，未发起选课请求");
+        if let Some(limit) = deadline {
+            if tokio::time::Instant::now() >= limit {
+                bail!("已达到监视截止时间，未提交");
+            }
+            tokio::time::timeout_at(limit, self.prepare_election(profile_id))
+                .await
+                .context("已达到监视截止时间，未提交")??;
+            if tokio::time::Instant::now() >= limit {
+                bail!("已达到监视截止时间，未提交");
+            }
+        } else {
+            self.prepare_election(profile_id).await?;
         }
         let token = if select {
-            self.token.as_deref().expect("prepared above")
+            &self.election.as_ref().expect("prepared above").token
         } else {
             "undefined"
         };
-        // Do not cancel an in-flight write merely because the watch deadline expires.
-        let result = batch_operate(self.session, self.profile_id, lesson_id, token, select).await;
-        if select
-            && let Ok(body) = &result
+        // Exactly one POST, never cancelled by the watch deadline and never replayed here.
+        let result = batch_operate(self, profile_id, lesson_id, token, select).await;
+        if let Ok(body) = &result
             && selection_session_expired(body)
         {
-            self.token = None;
+            self.invalidate_election();
         }
         eprintln!("计时：本次操作 {}ms", started.elapsed().as_millis());
         result
@@ -407,15 +445,12 @@ pub(crate) async fn query_class_schedule_html(
     Ok(html)
 }
 
+/// 页面生命周期由 Session 内部更新，不向调用方暴露 token。
 pub(crate) async fn fetch_elected_lesson_ids(
-    session: &Session,
+    session: &mut Session,
     profile_id: &str,
 ) -> Result<HashMap<String, bool>> {
-    let body = fetch_default_page(session, profile_id)
-        .await?
-        .text()
-        .await
-        .context("读取 defaultPage 失败")?;
+    let body = session.reload_page(profile_id).await?;
     Ok(parse_elected_ids(&body))
 }
 
@@ -430,7 +465,7 @@ async fn fetch_lesson_mapping(session: &Session, profile_id: &str) -> Result<Vec
         .context("课程映射解析任务异常")?
 }
 
-pub(crate) async fn fetch_lesson_counts(
+async fn fetch_lesson_counts(
     session: &Session,
     profile_id: &str,
 ) -> Result<HashMap<String, LessonCount>> {
@@ -452,30 +487,6 @@ async fn fetch_payload(session: &Session, url: &str) -> Result<String> {
         .text()
         .await
         .context("读取接口响应失败")
-}
-
-/// 请求 `defaultPage` 并解析隐藏字段 `elecSessionTime`。
-///
-/// 这个 GET 同时会在服务端建立"课选上下文"：缺少该上下文时
-/// `queryStdCount.action` 会抛 NullPointerException。需要长期盯名额时应先调用一次。
-async fn fetch_election_token(session: &Session, profile_id: &str) -> Result<String> {
-    let body = fetch_default_page(session, profile_id)
-        .await?
-        .error_for_status()?
-        .text()
-        .await
-        .context("读取 defaultPage 失败")?;
-    parse_elec_session_time(&body)
-}
-
-async fn fetch_default_page(session: &Session, profile_id: &str) -> Result<Response> {
-    let url = format!(
-        "{BASE_URL}/stdElectCourse!defaultPage.action?electionProfile.id={}",
-        urlencoding(profile_id)
-    );
-    let response = session.get_with_retry(&url, HeaderMap::new(), None).await?;
-    reject_redirect(&response, "defaultPage")?;
-    Ok(response)
 }
 
 async fn batch_operate(

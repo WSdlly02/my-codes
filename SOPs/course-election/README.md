@@ -93,7 +93,7 @@ course-election> fire 0 500
 明确“同时打开多个选课页面”拒绝：清除 token → 下次允许的尝试重新 GET 后 POST
 ```
 
-token 只来自 HTML，不从 HTTP Date 推算；字段缺失或异常时不提交。token 不跨 `fire` 命令缓存，避免 `refresh` / `find --selected` 等操作更新页面后误用旧值。失效刷新不增加隐式 POST 或额外尝试额度；网络异常仍不能证明服务端未执行，不自动判定成功。
+token 只来自 HTML，不从 HTTP Date 推算；字段缺失或异常时不提交。失效刷新不增加隐式 POST 或额外尝试额度；网络异常仍不能证明服务端未执行，不自动判定成功。
 
 获取 token 时打印 `defaultPage` 完整响应及解析耗时（含 GET 重试），提交时打印 POST 完整响应及本次选课总耗时。Cookie 在内存中即时更新，整轮成功或耗尽次数后保存，正常退出时也保存。强制终止进程不保证落盘。重试间隔仍从一次尝试结束后计算，POST 保持串行。
 
@@ -123,17 +123,37 @@ course-election> watch 3 600 --dry-run
 包括 token 失效后重新获取页面耗尽期限的情况。已发出的 POST 仍等待结果（受 HTTP 请求超时限制），
 不因为监视期限到达而取消并丢失结果。持续有空位但提交失败时，每轮仍会尝试一次。
 
-三个命令共享命令内的 `ElectionContext`，负责 token 初始化、复用、失效和提交截止时间；
-调度方式各自保留，不跨命令缓存上下文：
+三个写命令都要求"已经打开一个选课页面"。服务端的课选上下文挂在 `defaultPage` 上：
+缺少它 `batchOperator` 会返回 500 NullPointerException（实测），而 `elecSessionTime`（token）
+只是选课分支额外校验的值，退课仍发送 `undefined`。页面状态由 Session 独占；REPL 不持有、克隆或回填 token：
+
+| 时机 | 页面行为 |
+|---|---|
+| 需要提交但还没有页面（或轮次不符） | 打开新页面：GET `defaultPage` 并解析 token |
+| `refresh` / `find --selected` | 通过唯一加载入口重新打开页面，Session 内部立即更新状态 |
+| 服务端明确回"同时打开多个选课页面" | 作废，由下一次允许的尝试重新打开 |
+| `profile <id>` / `clear` / 重新 `login` | 换轮次或换会话，作废 |
+
+同一轮次里连续写操作因此只打开一次页面：
 
 | 命令 | 何时访问 defaultPage | 何时提交 |
 |---|---|---|
-| `fire` | 首次选课；明确 token 失效后的下一次允许尝试 | 按次数与间隔 |
-| `watch` | 启动时建立查询上下文；明确 token 失效后下一次出手 | 快照有空位且未到期 |
-| `drop` | 不要求访问；沿用 `undefined` 参数 | 按次数与间隔 |
+| `fire` / 手动 `arm` 触发 | 没有可用页面时（首次写入）；页面被判过期后 | 按次数与间隔 |
+| `watch` | 启动时（已有可用页面则复用） | 快照有空位且未到期 |
+| `drop` | 同上（token 仍发送 `undefined`） | 按次数与间隔 |
+| `arm <时间>` | T-5s 预热后提前准备（已有页面则复用）；准备成功且页面未失效时，T 时刻直接 POST | 保留最多 2 次尝试、间隔 500ms 的调度策略，适用于普通失败和 stale；网络错误仍可能意味着结果未知 |
 
-`refresh`、`find --selected` 也会读取 defaultPage，预热不会。defaultPage 是有状态的页面初始化，
+`reload_page` 是唯一 defaultPage 网络入口：先清除旧状态，再请求、完整读取并解析，成功后立刻保存新状态。
+请求、读取、解析失败或 future 被取消均不会留下旧 token；后续课程数据请求或写缓存失败也不会撤销已保存的新 token。
+`prepare_election` 只在缺少上下文或 profile 不匹配时调用它；所有名额查询及选/退课提交均经过 Session。
+Session 不可克隆，页面和 token 不对外暴露。明确 stale 的响应由 Session 统一处理，重试时机和次数仍由命令决定，无隐式 POST 补发。
+
+`refresh`、`find --selected` 也会读取 defaultPage，普通连接预热不会；定时 arm 的提前准备是单独的有状态步骤。
+defaultPage 是有状态的页面初始化，
 不是每次写入前的通用校验；外部浏览器重新打开页面仍可能使当前 token 失效。
+
+页面复用/失效的离线回归见 `tests/selection_path.py`（首次写打开页面、跨命令复用、
+过期恢复、refresh 后续失败保留新状态、页面失败清除旧状态、已选查询、换轮次作废、无上下文退课及初始化失败的重试额度）。
 
 离线回归：`python3 tests/watch_path.py target/debug/course-election`，覆盖正常命中、dry-run、
 截止时间、慢查询/初始化/token 刷新、临时失败恢复、认证错误和在途 POST 结果保留。
