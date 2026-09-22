@@ -13,8 +13,9 @@ use crate::app::cache::{
     load_saved_cookies,
 };
 use crate::app::http::{
-    Session, drop_lesson, fetch_and_cache_channels, fetch_elected_lesson_ids, prewarm,
-    query_class_schedule_html, refresh_course_data, select_lesson,
+    ElectionContext, Session, fetch_and_cache_channels, fetch_elected_lesson_ids,
+    fetch_lesson_counts, prewarm, query_class_schedule_html, refresh_course_data,
+    transient_request_error,
 };
 use crate::app::login::login;
 use crate::app::output::{
@@ -23,7 +24,7 @@ use crate::app::output::{
 use crate::app::parser::{
     resolve_lesson_id_by_name, selection_succeeded, summarize_selection_response,
 };
-use crate::app::support::{channels_cache_path, format_time, resolve_semester_id};
+use crate::app::support::{channels_cache_path, format_time, now_fixed, resolve_semester_id};
 
 struct State {
     session: Session,
@@ -33,6 +34,8 @@ struct State {
 
 const PROMPT: &str = "course-election> ";
 const ARM_PROMPT: &str = "arm> ";
+/// 名额没有变化时，每多少轮打印一次心跳，避免刷屏又能看出程序还活着。
+const WATCH_HEARTBEAT_ROUNDS: usize = 12;
 
 pub(crate) async fn run() -> Result<()> {
     let session = load_saved_cookies()
@@ -84,6 +87,7 @@ pub(crate) async fn run() -> Result<()> {
             "target" => set_target(&mut state, argument),
             "export-schedule" => run_export_schedule(&state, argument).await,
             "arm" => run_arm(&state, argument, &mut readline, &mut writer).await,
+            "watch" => run_watch(&state, argument).await,
             "fire" => run_fire_command(&state, argument).await,
             "drop" => run_drop_command(&state, argument).await,
             "clear" => run_clear(&mut state, argument),
@@ -369,6 +373,199 @@ async fn report_prewarm(session: &Session, writer: &mut SharedWriter) -> Result<
     Ok(())
 }
 
+/// 事件驱动捡漏：只读地轮询名额快照，出现空位才走一次写入链路。
+///
+/// 初始化选课上下文后轮询 `queryStdCount.action`；有空位才调用共享提交链路。
+async fn run_watch(state: &State, argument: &str) -> Result<()> {
+    let result = run_watch_inner(state, argument).await;
+    persist_action_cookies(&state.session);
+    result
+}
+
+async fn run_watch_inner(state: &State, argument: &str) -> Result<()> {
+    let profile = require_profile(state)?;
+    let lesson = require_target(state)?;
+
+    let mut interval = Duration::from_secs(5);
+    let mut timeout = Some(Duration::from_secs(1800));
+    let mut dry_run = false;
+    let mut numbers = 0usize;
+    for token in argument.split_whitespace() {
+        if token == "--dry-run" {
+            dry_run = true;
+            continue;
+        }
+        if token.starts_with("--") {
+            bail!("未知参数：{token}");
+        }
+        let value = token
+            .parse::<u64>()
+            .with_context(|| format!("参数必须是整数秒：{token}"))?;
+        match numbers {
+            0 => interval = Duration::from_secs(value.max(1)),
+            1 => timeout = (value != 0).then(|| Duration::from_secs(value)),
+            _ => bail!("用法：watch [间隔秒] [超时秒，0=不限时] [--dry-run]"),
+        }
+        numbers += 1;
+    }
+
+    println!(
+        "监视 lesson {lesson}：每 {} 秒读取一次名额快照{}；仅在出现空位时选课{}",
+        interval.as_secs(),
+        match timeout {
+            Some(value) => format!("，最长 {} 秒", value.as_secs()),
+            None => "，不限时".to_string(),
+        },
+        if dry_run {
+            "（dry-run：只观察不出手）"
+        } else {
+            ""
+        },
+    );
+
+    let deadline = timeout
+        .map(|duration| {
+            tokio::time::Instant::now()
+                .checked_add(duration)
+                .context("监视超时时间过大")
+        })
+        .transpose()?;
+    let mut election = ElectionContext::new(&state.session, profile, deadline);
+    // Establish the query context once; refresh only after an explicit stale-token rejection.
+    loop {
+        if watch_expired(deadline) {
+            return Ok(());
+        }
+        match election.prepare().await {
+            Ok(()) => break,
+            Err(_) if watch_expired(deadline) => return Ok(()),
+            Err(error) if transient_request_error(&error) => {
+                println!("建立选课上下文暂时失败：{error:#}；继续等待");
+                watch_sleep(interval, deadline).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    println!(
+        "[{}] 已建立课选上下文并取得 token",
+        format_time(now_fixed())
+    );
+
+    let mut last: Option<(i64, i64, i64)> = None;
+    let mut rounds = 0usize;
+
+    loop {
+        if watch_expired(deadline) {
+            return Ok(());
+        }
+        rounds += 1;
+        let query = fetch_lesson_counts(&state.session, profile);
+        let result = match deadline {
+            Some(deadline) => match tokio::time::timeout_at(deadline, query).await {
+                Ok(result) => result,
+                Err(_) => {
+                    watch_expired(Some(deadline));
+                    return Ok(());
+                }
+            },
+            None => query.await,
+        };
+        let counts = match result {
+            Ok(counts) => counts,
+            Err(error) if transient_request_error(&error) => {
+                println!(
+                    "[{}] 名额查询暂时失败：{error:#}；继续等待",
+                    format_time(now_fixed())
+                );
+                watch_sleep(interval, deadline).await;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let Some(count) = counts.get(lesson) else {
+            println!(
+                "[{}] 第 {rounds} 轮：{lesson} 不在本轮名额快照里（轮次可能已切换）",
+                format_time(now_fixed())
+            );
+            watch_sleep(interval, deadline).await;
+            continue;
+        };
+
+        let snapshot = (count.selected, count.limit, count.reserved);
+        let vacancy = count.limit - count.selected - count.reserved;
+        if last != Some(snapshot) {
+            last = Some(snapshot);
+            println!(
+                "[{}] 第 {rounds} 轮：{} {}/{}，空位 {}{}",
+                format_time(now_fixed()),
+                lesson,
+                count.selected,
+                count.limit,
+                vacancy,
+                if count.reserved > 0 {
+                    format!("（保留 {}）", count.reserved)
+                } else {
+                    String::new()
+                },
+            );
+        } else if rounds % WATCH_HEARTBEAT_ROUNDS == 0 {
+            println!(
+                "[{}] 第 {rounds} 轮：{}/{} 无变化，继续等待",
+                format_time(now_fixed()),
+                count.selected,
+                count.limit
+            );
+        }
+
+        if vacancy > 0 {
+            if watch_expired(deadline) {
+                return Ok(());
+            }
+            if dry_run {
+                println!(
+                    "[{}] 空位 {vacancy}，dry-run 不出手",
+                    format_time(now_fixed())
+                );
+            } else {
+                println!("[{}] 空位 {vacancy}，出手选课", format_time(now_fixed()));
+                match election.submit(lesson, true).await {
+                    Ok(body) => {
+                        let message = summarize_selection_response(&body);
+                        println!("[{}] {message}", format_time(now_fixed()));
+                        if selection_succeeded(&body) {
+                            println!(
+                                "[{}] 已命中，停止监视（共 {rounds} 轮）",
+                                format_time(now_fixed())
+                            );
+                            return Ok(());
+                        }
+                    }
+                    Err(error) => {
+                        println!("[{}] 选课请求失败：{error:#}", format_time(now_fixed()))
+                    }
+                }
+            }
+        }
+
+        watch_sleep(interval, deadline).await;
+    }
+}
+
+fn watch_expired(deadline: Option<tokio::time::Instant>) -> bool {
+    let expired = deadline.is_some_and(|limit| tokio::time::Instant::now() >= limit);
+    if expired {
+        println!("[{}] 达到最长等待时间，停止监视", format_time(now_fixed()));
+    }
+    expired
+}
+
+async fn watch_sleep(interval: Duration, deadline: Option<tokio::time::Instant>) {
+    let duration = deadline.map_or(interval, |end| {
+        interval.min(end.saturating_duration_since(tokio::time::Instant::now()))
+    });
+    tokio::time::sleep(duration).await;
+}
+
 async fn wait_until_or_cancel(
     target: DateTime<FixedOffset>,
     readline: &mut Readline,
@@ -438,10 +635,14 @@ async fn run_action(
     select: bool,
 ) -> Result<()> {
     let result = run_action_inner(state, attempts, interval, select).await;
-    if let Err(error) = state.session.persist_cookies() {
+    persist_action_cookies(&state.session);
+    result
+}
+
+fn persist_action_cookies(session: &Session) {
+    if let Err(error) = session.persist_cookies() {
         eprintln!("保存 Cookie 失败：{error:#}");
     }
-    result
 }
 
 async fn run_action_inner(
@@ -454,14 +655,10 @@ async fn run_action_inner(
     let lesson = require_target(state)?;
     let mut attempt = 0usize;
     // Never share a token across commands: refresh/find --selected can replace it.
-    let mut elec_session_time = None;
+    let mut election = ElectionContext::new(&state.session, profile, None);
     loop {
         attempt += 1;
-        let result = if select {
-            select_lesson(&state.session, profile, lesson, &mut elec_session_time).await
-        } else {
-            drop_lesson(&state.session, profile, lesson).await
-        };
+        let result = election.submit(lesson, select).await;
         match result {
             Ok(body) => {
                 println!("[{attempt}] {}", summarize_selection_response(&body));
@@ -512,6 +709,6 @@ fn require_target(state: &State) -> Result<&str> {
 
 fn print_help() {
     println!(
-        "命令：login <用户名> | status | channels | profile <id> | refresh | find [--selected] [--id ID|--code CODE|名称] | target <lesson-id|完整课程名> | export-schedule [semester-id] [output.html] | arm [RFC3339时间] | fire/drop [次数] [间隔ms] | clear [all] | quit"
+        "命令：login <用户名> | status | channels | profile <id> | refresh | find [--selected] [--id ID|--code CODE|名称] | target <lesson-id|完整课程名> | export-schedule [semester-id] [output.html] | arm [RFC3339时间] | watch [间隔秒] [超时秒，0=不限时] [--dry-run] | fire/drop [次数] [间隔ms] | clear [all] | quit"
     );
 }

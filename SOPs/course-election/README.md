@@ -101,6 +101,46 @@ token 只来自 HTML，不从 HTTP Date 推算；字段缺失或异常时不提�
 
 选课链路回归：`python3 tests/selection_path.py target/debug/course-election`（先 `cargo build`，需 Python 3 与 `openssl`）。使用临时证书、本地 TLS 模拟服务器和隔离目录，验证 HTML token、复用、失效刷新、尝试额度、缺失字段及退课；不连接真实教务系统。
 
+捡漏（事件驱动）：
+
+```text
+course-election> watch
+course-election> watch 5 1800
+course-election> watch 3 600 --dry-run
+```
+
+`watch` 需要先 `profile <id>` 和 `target <lesson-id>`。启动时访问一次 `defaultPage`，
+建立选课上下文并取得 token，再只读地轮询名额快照
+`stdElectCourse!queryStdCount.action?profileId=<id>`（页面自身每 20 秒刷新同一接口）。
+只有目标出现空位（`lc - sc - wc > 0`）时才复用 token 提交 `batchOperator`。
+命中即停止；被他人抢先则继续等待。查询的临时网络错误、429/可重试 5xx 等即使耗尽底层 GET 重试，
+仍会打印原因后等待下一轮；明确认证/权限错误、重定向或无法解析的响应退出，不无限掩盖协议变化。
+
+参数依次为轮询间隔秒（默认 `5`）和最长等待秒（默认 `1800`，`0` 表示不限时）；`--dry-run`
+只观察不出手。名额无变化时每 12 轮打印一次心跳，避免刷屏。
+
+总期限从初始化上下文前开始计时，查询和睡眠受剩余时间限制；过期后不发起新 POST，
+包括 token 失效后重新获取页面耗尽期限的情况。已发出的 POST 仍等待结果（受 HTTP 请求超时限制），
+不因为监视期限到达而取消并丢失结果。持续有空位但提交失败时，每轮仍会尝试一次。
+
+三个命令共享命令内的 `ElectionContext`，负责 token 初始化、复用、失效和提交截止时间；
+调度方式各自保留，不跨命令缓存上下文：
+
+| 命令 | 何时访问 defaultPage | 何时提交 |
+|---|---|---|
+| `fire` | 首次选课；明确 token 失效后的下一次允许尝试 | 按次数与间隔 |
+| `watch` | 启动时建立查询上下文；明确 token 失效后下一次出手 | 快照有空位且未到期 |
+| `drop` | 不要求访问；沿用 `undefined` 参数 | 按次数与间隔 |
+
+`refresh`、`find --selected` 也会读取 defaultPage，预热不会。defaultPage 是有状态的页面初始化，
+不是每次写入前的通用校验；外部浏览器重新打开页面仍可能使当前 token 失效。
+
+离线回归：`python3 tests/watch_path.py target/debug/course-election`，覆盖正常命中、dry-run、
+截止时间、慢查询/初始化/token 刷新、临时失败恢复、认证错误和在途 POST 结果保留。
+
+`fire` 与 `watch` 的分工：`fire` 盲目重复写请求（适合已知有余量、只需重试）；`watch` 先盯名额、
+出现空位才写，适合满员课程等人的退课。
+
 退课：
 
 ```text
@@ -145,6 +185,7 @@ find [--selected] [--id ID|--code CODE|名称]
 target <lesson-id|完整课程名>
 export-schedule [semester-id] [output.html]
 arm [RFC3339时间]
+watch [间隔秒] [超时秒]
 fire [次数] [间隔毫秒]
 drop [次数] [间隔毫秒]
 clear [all]

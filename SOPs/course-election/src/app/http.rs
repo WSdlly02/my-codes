@@ -207,7 +207,7 @@ impl Session {
                 Ok(response) if !should_retry_status(response.status().as_u16()) => {
                     return Ok(response);
                 }
-                Ok(response) => last_error = Some(anyhow!(response.status().to_string())),
+                Ok(response) => last_error = response.error_for_status().err().map(Into::into),
                 Err(error) => last_error = Some(error.into()),
             }
             if attempt + 1 < RETRY_ATTEMPTS {
@@ -309,55 +309,91 @@ pub(crate) async fn prewarm(session: &Session) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn select_lesson(
-    session: &Session,
-    profile_id: &str,
-    lesson_id: &str,
-    elec_session_time: &mut Option<String>,
-) -> Result<String> {
-    let started = Instant::now();
-    if elec_session_time.is_none() {
-        let result = async {
-            let body = fetch_default_page(session, profile_id)
-                .await?
-                .error_for_status()?
-                .text()
-                .await
-                .context("读取 defaultPage 失败")?;
-            parse_elec_session_time(&body)
+/// Command-scoped server context. Never shared across profile changes or REPL commands.
+pub(crate) struct ElectionContext<'a> {
+    session: &'a Session,
+    profile_id: &'a str,
+    token: Option<String>,
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl<'a> ElectionContext<'a> {
+    pub(crate) fn new(
+        session: &'a Session,
+        profile_id: &'a str,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Self {
+        Self {
+            session,
+            profile_id,
+            token: None,
+            deadline,
         }
-        .await;
+    }
+
+    pub(crate) async fn prepare(&mut self) -> Result<()> {
+        if self.token.is_some() {
+            return Ok(());
+        }
+        let started = Instant::now();
+        let result = match self.deadline {
+            Some(deadline) => tokio::time::timeout_at(
+                deadline,
+                fetch_election_token(self.session, self.profile_id),
+            )
+            .await
+            .context("已达到监视截止时间，停止获取选课上下文")?,
+            None => fetch_election_token(self.session, self.profile_id).await,
+        };
         eprintln!(
             "计时：defaultPage 完整响应及 token 解析 {}ms（含 GET 重试）{}",
             started.elapsed().as_millis(),
             if result.is_err() { "（失败）" } else { "" }
         );
-        *elec_session_time = Some(result?);
+        self.token = Some(result?);
+        Ok(())
     }
-    let result = batch_operate(
-        session,
-        profile_id,
-        lesson_id,
-        elec_session_time.as_deref().expect("token fetched above"),
-        true,
-    )
-    .await;
-    if let Ok(body) = &result
-        && selection_session_expired(body)
-    {
-        // No hidden retry: the next allowed attempt will fetch a fresh token.
-        *elec_session_time = None;
+
+    pub(crate) async fn submit(&mut self, lesson_id: &str, select: bool) -> Result<String> {
+        let started = Instant::now();
+        if select {
+            self.prepare().await?;
+        }
+        // Check after prepare too: a token refresh can consume the remaining budget.
+        if self
+            .deadline
+            .is_some_and(|deadline| tokio::time::Instant::now() >= deadline)
+        {
+            bail!("已达到监视截止时间，未发起选课请求");
+        }
+        let token = if select {
+            self.token.as_deref().expect("prepared above")
+        } else {
+            "undefined"
+        };
+        // Do not cancel an in-flight write merely because the watch deadline expires.
+        let result = batch_operate(self.session, self.profile_id, lesson_id, token, select).await;
+        if select
+            && let Ok(body) = &result
+            && selection_session_expired(body)
+        {
+            self.token = None;
+        }
+        eprintln!("计时：本次操作 {}ms", started.elapsed().as_millis());
+        result
     }
-    eprintln!("计时：本次选课 {}ms", started.elapsed().as_millis());
-    result
 }
 
-pub(crate) async fn drop_lesson(
-    session: &Session,
-    profile_id: &str,
-    lesson_id: &str,
-) -> Result<String> {
-    batch_operate(session, profile_id, lesson_id, "undefined", false).await
+pub(crate) fn transient_request_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<reqwest::Error>().is_some_and(|error| {
+        error.is_timeout()
+            || error.is_connect()
+            || error.is_request()
+            || error.is_body()
+            || error
+                .status()
+                .is_some_and(|status| should_retry_status(status.as_u16()))
+    })
 }
 
 pub(crate) async fn query_class_schedule_html(
@@ -394,7 +430,7 @@ async fn fetch_lesson_mapping(session: &Session, profile_id: &str) -> Result<Vec
         .context("课程映射解析任务异常")?
 }
 
-async fn fetch_lesson_counts(
+pub(crate) async fn fetch_lesson_counts(
     session: &Session,
     profile_id: &str,
 ) -> Result<HashMap<String, LessonCount>> {
@@ -411,7 +447,25 @@ async fn fetch_lesson_counts(
 async fn fetch_payload(session: &Session, url: &str) -> Result<String> {
     let response = session.get_with_retry(url, HeaderMap::new(), None).await?;
     reject_redirect(&response, "接口")?;
-    response.text().await.context("读取接口响应失败")
+    response
+        .error_for_status()?
+        .text()
+        .await
+        .context("读取接口响应失败")
+}
+
+/// 请求 `defaultPage` 并解析隐藏字段 `elecSessionTime`。
+///
+/// 这个 GET 同时会在服务端建立"课选上下文"：缺少该上下文时
+/// `queryStdCount.action` 会抛 NullPointerException。需要长期盯名额时应先调用一次。
+async fn fetch_election_token(session: &Session, profile_id: &str) -> Result<String> {
+    let body = fetch_default_page(session, profile_id)
+        .await?
+        .error_for_status()?
+        .text()
+        .await
+        .context("读取 defaultPage 失败")?;
+    parse_elec_session_time(&body)
 }
 
 async fn fetch_default_page(session: &Session, profile_id: &str) -> Result<Response> {
