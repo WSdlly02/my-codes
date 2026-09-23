@@ -333,6 +333,46 @@ impl Session {
         self.election = None;
     }
 
+    pub(crate) fn election_ready(&self, profile: &str) -> bool {
+        self.election
+            .as_ref()
+            .is_some_and(|page| page.profile_id == profile)
+    }
+
+    /// Restricted read capability: shared login/connection pool, no page or write methods.
+    pub(crate) fn count_reader(&self, profile: &str) -> CountReader {
+        CountReader {
+            client: self.client.clone(),
+            profile: profile.into(),
+        }
+    }
+
+    /// Always opens a fresh page, even for the current profile.
+    pub(crate) async fn select_profile(&mut self, profile: &str) -> Result<()> {
+        self.reload_page(profile).await?;
+        Ok(())
+    }
+
+    /// Used only after the daemon's submission grant; must not initialize a page here.
+    pub(crate) async fn submit_ready(
+        &mut self,
+        profile: &str,
+        lesson: &str,
+        select: bool,
+    ) -> Result<String> {
+        let Some(page) = self.election.as_ref().filter(|p| p.profile_id == profile) else {
+            bail!("选课上下文未就绪");
+        };
+        let token = if select { &page.token } else { "undefined" };
+        let result = batch_operate(self, profile, lesson, token, select).await;
+        if let Ok(body) = &result
+            && selection_session_expired(body)
+        {
+            self.invalidate_election();
+        }
+        result
+    }
+
     // The sole defaultPage request + state transition. Invalid before the first await,
     // so errors and cancellation cannot leave a locally stale page behind.
     async fn reload_page(&mut self, profile_id: &str) -> Result<String> {
@@ -375,50 +415,27 @@ impl Session {
         self.reload_page(profile_id).await?;
         Ok(())
     }
+}
 
-    pub(crate) async fn lesson_counts(
-        &mut self,
-        profile_id: &str,
-    ) -> Result<HashMap<String, LessonCount>> {
-        self.prepare_election(profile_id).await?;
-        fetch_lesson_counts(self, profile_id).await
-    }
+#[derive(Clone)]
+pub(crate) struct CountReader {
+    client: Client,
+    profile: String,
+}
 
-    pub(crate) async fn submit_lesson(
-        &mut self,
-        profile_id: &str,
-        lesson_id: &str,
-        select: bool,
-        deadline: Option<tokio::time::Instant>,
-    ) -> Result<String> {
-        let started = Instant::now();
-        if let Some(limit) = deadline {
-            if tokio::time::Instant::now() >= limit {
-                bail!("已达到监视截止时间，未提交");
-            }
-            tokio::time::timeout_at(limit, self.prepare_election(profile_id))
-                .await
-                .context("已达到监视截止时间，未提交")??;
-            if tokio::time::Instant::now() >= limit {
-                bail!("已达到监视截止时间，未提交");
-            }
-        } else {
-            self.prepare_election(profile_id).await?;
-        }
-        let token = if select {
-            &self.election.as_ref().expect("prepared above").token
-        } else {
-            "undefined"
-        };
-        // Exactly one POST, never cancelled by the watch deadline and never replayed here.
-        let result = batch_operate(self, profile_id, lesson_id, token, select).await;
-        if let Ok(body) = &result
-            && selection_session_expired(body)
-        {
-            self.invalidate_election();
-        }
-        eprintln!("计时：本次操作 {}ms", started.elapsed().as_millis());
-        result
+impl CountReader {
+    pub(crate) async fn fetch(&self) -> Result<HashMap<String, LessonCount>> {
+        let response = self
+            .client
+            .get(format!(
+                "{BASE_URL}/stdElectCourse!queryStdCount.action?profileId={}",
+                urlencoding(&self.profile)
+            ))
+            .send()
+            .await?;
+        reject_redirect(&response, "名额查询")?;
+        let body = response.error_for_status()?.text().await?;
+        parse_count_payload(&body)
     }
 }
 
@@ -523,12 +540,15 @@ async fn batch_operate(
     );
     let started = Instant::now();
     let result = async {
-        session
+        let response = session
             .request(Method::POST, &url, headers, None)
             .body(format!("operator0={}", urlencoding(&operator)))
             .send()
             .await
-            .context("发送选课请求失败")?
+            .context("发送选课请求失败")?;
+        reject_redirect(&response, "选课提交")?;
+        response
+            .error_for_status()?
             .text()
             .await
             .context("读取选课响应失败")

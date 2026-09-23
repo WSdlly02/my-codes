@@ -195,6 +195,12 @@ pub(crate) fn selection_session_expired(body: &str) -> bool {
     summarize_selection_response(body).contains("同时打开多个选课页面，请至最新页面进行操作")
 }
 
+/// Whether the server told us what happened. Anything else leaves the write's effect unknown.
+pub(crate) fn selection_response_recognized(body: &str) -> bool {
+    let message = summarize_selection_response(body);
+    message.contains("成功") || message.contains("失败") || selection_session_expired(body)
+}
+
 pub(crate) fn parse_elec_session_time(html: &str) -> Result<String> {
     let input_re = Regex::new(r"(?is)<input\b[^>]*>").unwrap();
     let attr_re = Regex::new(r#"(?is)\s(name|value)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap();
@@ -350,7 +356,7 @@ fn sort_index_values(index: &mut HashMap<String, Vec<String>>) {
 mod tests {
     use super::{
         build_lesson_mapping_cache, parse_count_payload, parse_lesson_payload,
-        summarize_selection_response,
+        selection_response_recognized, summarize_selection_response,
     };
     use crate::model::Lesson;
 
@@ -431,6 +437,14 @@ mod tests {
     fn summarize_selection_response_extracts_message() {
         let body = r#"<html><body><div style="margin:auto;"> 选课成功 </br></div></body></html>"#;
         assert_eq!(summarize_selection_response(body), "选课成功");
+    }
+
+    #[test]
+    fn only_explicit_selection_results_are_recognized() {
+        assert!(selection_response_recognized("选课成功"));
+        assert!(selection_response_recognized("选课失败:名额已满"));
+        assert!(!selection_response_recognized("server error"));
+        assert!(!selection_response_recognized(""));
     }
 
     #[test]

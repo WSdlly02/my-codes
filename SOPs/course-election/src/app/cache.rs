@@ -6,10 +6,11 @@ use std::path::Path;
 
 use crate::app::support::{
     channels_cache_path, cookie_file_path, counts_cache_path, ensure_cache_dir, format_time,
-    mapping_cache_path,
+    mapping_cache_path, selected_cache_path,
 };
 use crate::model::{
     ChannelCache, LessonCountSnapshot, LessonMappingCache, SavedCookie, SavedCookies,
+    SelectedSnapshot,
 };
 
 pub(crate) fn load_saved_cookies() -> Result<SavedCookies> {
@@ -48,6 +49,14 @@ pub(crate) fn load_count_snapshot(profile_id: &str) -> Result<LessonCountSnapsho
 
 pub(crate) fn save_count_snapshot(profile_id: &str, snapshot: &LessonCountSnapshot) -> Result<()> {
     save_json(&counts_cache_path(profile_id), snapshot)
+}
+
+pub(crate) fn load_selected_snapshot(profile_id: &str) -> Result<SelectedSnapshot> {
+    load_json(&selected_cache_path(profile_id))
+}
+
+pub(crate) fn save_selected_snapshot(snapshot: &SelectedSnapshot) -> Result<()> {
+    save_json(&selected_cache_path(&snapshot.profile), snapshot)
 }
 
 pub(crate) fn clear_login_state() -> Result<()> {

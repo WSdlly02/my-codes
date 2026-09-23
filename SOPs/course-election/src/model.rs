@@ -181,3 +181,10 @@ pub struct LessonCountSnapshot {
     #[serde(default)]
     pub counts: HashMap<String, LessonCount>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectedSnapshot {
+    pub profile: String,
+    pub at_ms: i64,
+    pub selected: HashMap<String, bool>,
+}

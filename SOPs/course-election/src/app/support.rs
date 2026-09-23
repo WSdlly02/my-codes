@@ -108,6 +108,10 @@ pub(crate) fn counts_cache_path(profile_id: &str) -> PathBuf {
     Path::new(CACHE_DIR).join(format!("counts_{profile_id}.json"))
 }
 
+pub(crate) fn selected_cache_path(profile_id: &str) -> PathBuf {
+    Path::new(CACHE_DIR).join(format!("selected_{profile_id}.json"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::semester_id_for_date;

@@ -1,6 +1,7 @@
 use crate::model::{ArrangeInfo, Lesson, LessonCount, LessonCountSnapshot, LessonMappingCache};
 use std::collections::HashMap;
 
+#[derive(serde::Serialize)]
 pub(crate) struct LessonDisplayEntry {
     pub(crate) lesson: Lesson,
     pub(crate) count: Option<LessonCount>,
