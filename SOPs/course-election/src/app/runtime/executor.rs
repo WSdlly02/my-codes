@@ -1,170 +1,273 @@
-//! The only Session owner. Prepares, obtains a grant, submits once, then reports back.
-use super::{Context, Event, Work};
+//! The only Session owner: an actor that runs one request at a time, in arrival order.
+//!
+//! Page context changes (reloading defaultPage, login, profile switch) happen under the
+//! write side of `gate`; capacity reads hold the read side. So no read overlaps a change,
+//! and the reader published in `context` always matches the server-side page.
+use super::Context;
 use crate::{
     app::{
         cache,
         http::{self, Session},
-        intent::{Intent, Outcome, now_ms},
         login, parser,
-        protocol::{Maintenance, Mode, Response},
+        protocol::{Maintenance, Response},
+        support::now_ms,
     },
     model::SelectedSnapshot,
 };
-use anyhow::{Context as _, Result};
-use tokio::sync::{mpsc, oneshot};
+use anyhow::{Context as _, Result, anyhow};
+use std::sync::Arc;
+use tokio::sync::{RwLock, mpsc, oneshot, watch};
 
-pub(super) async fn run(mut work: mpsc::Receiver<Work>, events: mpsc::Sender<Event>) -> Result<()> {
-    let mut session = match cache::load_saved_cookies() {
+pub(super) enum Submitted {
+    Succeeded(String),
+    /// The server refused (full, not open yet, ...); retrying is safe.
+    Rejected(String),
+    /// Nothing was sent.
+    NotSent(String),
+    /// A POST may have been executed; never retried.
+    Unknown(String),
+}
+
+pub(super) enum Request {
+    Prepare {
+        profile: String,
+        prewarm: bool,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    Submit {
+        profile: String,
+        lesson: String,
+        select: bool,
+        reply: oneshot::Sender<Submitted>,
+    },
+    Maintain {
+        maintenance: Maintenance,
+        reply: oneshot::Sender<Result<Response>>,
+    },
+}
+
+#[derive(Clone)]
+pub(super) struct Executor(mpsc::Sender<Request>);
+
+const STOPPED: &str = "Executor 已停止";
+
+/// An Executor whose requests the test answers by hand.
+#[cfg(test)]
+pub(super) fn fake() -> (Executor, mpsc::Receiver<Request>) {
+    let (sender, requests) = mpsc::channel(8);
+    (Executor(sender), requests)
+}
+
+impl Executor {
+    /// Opens the election page unless it is already open; never rotates a valid token.
+    pub(super) async fn prepare(&self, profile: &str, prewarm: bool) -> Result<()> {
+        let (reply, result) = oneshot::channel();
+        let profile = profile.into();
+        self.0
+            .send(Request::Prepare {
+                profile,
+                prewarm,
+                reply,
+            })
+            .await
+            .map_err(|_| anyhow!(STOPPED))?;
+        result.await.map_err(|_| anyhow!(STOPPED))?
+    }
+
+    /// Exactly one POST (after opening the page if needed). Once sent, it always completes.
+    pub(super) async fn submit(&self, profile: &str, lesson: &str, select: bool) -> Submitted {
+        let (reply, result) = oneshot::channel();
+        let request = Request::Submit {
+            profile: profile.into(),
+            lesson: lesson.into(),
+            select,
+            reply,
+        };
+        if self.0.send(request).await.is_err() {
+            return Submitted::NotSent(STOPPED.into());
+        }
+        result
+            .await
+            .unwrap_or_else(|_| Submitted::Unknown(format!("{STOPPED}，提交结果未知")))
+    }
+
+    pub(super) async fn maintain(&self, maintenance: Maintenance) -> Result<Response> {
+        let (reply, result) = oneshot::channel();
+        self.0
+            .send(Request::Maintain { maintenance, reply })
+            .await
+            .map_err(|_| anyhow!(STOPPED))?;
+        result.await.map_err(|_| anyhow!(STOPPED))?
+    }
+}
+
+pub(super) fn spawn(context: watch::Sender<Context>, gate: Arc<RwLock<()>>) -> Result<Executor> {
+    let session = match cache::load_saved_cookies() {
         Ok(saved) => Session::new(saved.cookies)?,
         Err(_) => Session::empty()?,
     };
-    let mut profile: Option<String> = None;
-    while let Some(next) = work.recv().await {
-        let event = match next {
-            Work::Maintenance(maintenance) => {
-                let result = maintain(maintenance, &mut session, &mut profile).await;
-                Event::MaintenanceDone {
-                    result,
-                    context: context(&session, &profile),
-                }
-            }
-            Work::Advance { job, prepare_only } => {
-                let outcome = advance(&job, prepare_only, &mut session, &profile, &events).await;
-                Event::JobDone {
-                    id: job.id,
-                    prepare_only,
-                    outcome,
-                    context: context(&session, &profile),
-                }
-            }
-        };
-        if let Err(e) = session.persist_cookies() {
-            tracing::warn!("保存 Cookie 失败：{e:#}");
-        }
-        if events.send(event).await.is_err() {
-            break;
-        }
-    }
-    Ok(())
+    let (sender, requests) = mpsc::channel(64);
+    let actor = Actor {
+        session,
+        profile: None,
+        context,
+        gate,
+    };
+    tokio::spawn(actor.run(requests));
+    Ok(Executor(sender))
 }
 
-fn context(session: &Session, profile: &Option<String>) -> Context {
-    Context {
-        profile: profile.clone(),
-        reader: profile
+struct Actor {
+    session: Session,
+    profile: Option<String>,
+    context: watch::Sender<Context>,
+    gate: Arc<RwLock<()>>,
+}
+
+impl Actor {
+    async fn run(mut self, mut requests: mpsc::Receiver<Request>) {
+        while let Some(request) = requests.recv().await {
+            match request {
+                Request::Prepare {
+                    profile,
+                    prewarm,
+                    reply,
+                } => {
+                    let result = self.ensure_page(&profile, prewarm).await;
+                    let _ = reply.send(result);
+                }
+                Request::Submit {
+                    profile,
+                    lesson,
+                    select,
+                    reply,
+                } => {
+                    let submitted = self.submit(&profile, &lesson, select).await;
+                    let _ = reply.send(submitted);
+                }
+                Request::Maintain { maintenance, reply } => {
+                    let gate = self.gate.clone();
+                    let _changing = gate.write().await;
+                    let result = self.maintain(maintenance).await;
+                    self.publish();
+                    let _ = reply.send(result);
+                }
+            }
+            if let Err(e) = self.session.persist_cookies() {
+                tracing::warn!("保存 Cookie 失败：{e:#}");
+            }
+        }
+    }
+
+    fn publish(&self) {
+        let reader = self
+            .profile
             .as_deref()
-            .filter(|p| session.election_ready(p))
-            .map(|p| session.count_reader(p)),
+            .filter(|p| self.session.election_ready(p))
+            .map(|p| self.session.count_reader(p));
+        self.context.send_replace(Context {
+            profile: self.profile.clone(),
+            reader,
+        });
     }
-}
 
-async fn advance(
-    job: &Intent,
-    prepare_only: bool,
-    session: &mut Session,
-    profile: &Option<String>,
-    events: &mpsc::Sender<Event>,
-) -> Outcome {
-    if profile.as_deref() != Some(&job.profile) {
-        return Outcome::BeforeError("profile 已改变".into());
-    }
-    if prepare_only || !session.election_ready(&job.profile) {
-        if prepare_only && job.spec.mode == Mode::Arm {
-            let _ = http::prewarm(session).await;
+    async fn ensure_page(&mut self, profile: &str, prewarm: bool) -> Result<()> {
+        anyhow::ensure!(self.profile.as_deref() == Some(profile), "profile 已改变");
+        if prewarm {
+            let _ = http::prewarm(&self.session).await;
         }
-        if let Err(e) = session.prepare_election(&job.profile).await {
-            return Outcome::BeforeError(format!("{e:#}"));
+        if !self.session.election_ready(profile) {
+            let gate = self.gate.clone();
+            let _changing = gate.write().await;
+            let result = self.session.prepare_election(profile).await;
+            self.publish();
+            result?;
         }
-        if prepare_only {
-            return Outcome::Prepared;
-        }
+        Ok(())
     }
-    let (reply, granted) = oneshot::channel();
-    let grant = Event::Grant { id: job.id, reply };
-    if events.send(grant).await.is_err() || !granted.await.unwrap_or(false) {
-        return Outcome::Skipped;
-    }
-    // Granted: nothing but the POST itself happens from here on.
-    let select = job.spec.mode != Mode::Drop;
-    match session
-        .submit_ready(&job.profile, &job.spec.lesson, select)
-        .await
-    {
-        Ok(body) if parser::selection_response_recognized(&body) => Outcome::Response(body),
-        Ok(body) => Outcome::Unknown(format!(
-            "未识别的提交响应，禁止自动重试：{}",
-            parser::summarize_selection_response(&body)
-        )),
-        Err(e) => Outcome::Unknown(format!("提交结果未知，禁止自动重试：{e:#}")),
-    }
-}
 
-async fn maintain(
-    maintenance: Maintenance,
-    session: &mut Session,
-    profile: &mut Option<String>,
-) -> Result<Response> {
-    match maintenance {
-        Maintenance::Reconcile { id } => {
-            let profile = profile.as_deref().context("未选择 profile")?;
-            let selected = http::fetch_elected_lesson_ids(session, profile).await?;
-            Ok(Response::Reconciled { id, selected })
+    async fn submit(&mut self, profile: &str, lesson: &str, select: bool) -> Submitted {
+        if let Err(e) = self.ensure_page(profile, false).await {
+            return Submitted::NotSent(format!("{e:#}"));
         }
-        Maintenance::Profile { id, .. } => {
-            *profile = None;
-            session.select_profile(&id).await?;
-            *profile = Some(id.clone());
-            Ok(Response::Profile { profile: id })
+        let result = self.session.submit_ready(profile, lesson, select).await;
+        if !self.session.election_ready(profile) {
+            self.publish(); // the server invalidated the page
         }
-        Maintenance::Login { username, password } => {
-            *profile = None;
-            // Never keep an old login session usable after a failed account change.
-            *session = Session::empty()?;
-            cache::clear_login_state()?;
-            *session = login::login(&username, &password).await?;
-            Ok(Response::LoggedIn)
+        match result {
+            Ok(body) => {
+                let message = parser::summarize_selection_response(&body);
+                if parser::selection_succeeded(&body) {
+                    Submitted::Succeeded(message)
+                } else if parser::selection_response_recognized(&body) {
+                    Submitted::Rejected(message)
+                } else {
+                    Submitted::Unknown(format!("未识别的提交响应：{message}"))
+                }
+            }
+            Err(e) => Submitted::Unknown(format!("提交结果未知：{e:#}")),
         }
-        Maintenance::Logout { .. } => {
-            *profile = None;
-            *session = Session::empty()?;
-            cache::clear_login_state()?;
-            Ok(Response::LoggedOut)
-        }
-        Maintenance::Refresh => {
-            let profile = profile.as_deref().context("未选择 profile")?;
-            let data = http::refresh_course_data(session, profile).await?;
-            Ok(Response::Refreshed {
-                mapping: data.mapping.lessons.len(),
-                counts: data.counts.as_ref().map(|c| c.counts.len()),
-                counts_from_cache: data.counts_from_cache,
-            })
-        }
-        Maintenance::Selected => {
-            let profile = profile.as_deref().context("未选择 profile")?;
-            let snapshot = SelectedSnapshot {
-                profile: profile.into(),
-                at_ms: now_ms(),
-                selected: http::fetch_elected_lesson_ids(session, profile).await?,
-            };
-            cache::save_selected_snapshot(&snapshot)?;
-            Ok(Response::Selected(snapshot))
-        }
-        Maintenance::Channels => Ok(Response::Channels(
-            http::fetch_and_cache_channels(session).await?,
-        )),
-        Maintenance::Export { semester } => Ok(Response::Exported {
-            html: http::query_class_schedule_html(session, &semester).await?,
-            semester,
-        }),
-        Maintenance::Prepare => {
-            let profile = profile.as_deref().context("未选择 profile")?;
-            http::prewarm(session).await?;
-            session.prepare_election(profile).await?;
-            Ok(Response::Prepared)
-        }
-        Maintenance::ClearCache => {
-            cache::clear_derived_caches()?;
-            Ok(Response::Cleared)
+    }
+
+    async fn maintain(&mut self, maintenance: Maintenance) -> Result<Response> {
+        let session = &mut self.session;
+        match maintenance {
+            Maintenance::Profile { id } => {
+                self.profile = None;
+                session.select_profile(&id).await?;
+                self.profile = Some(id.clone());
+                Ok(Response::Profile { profile: id })
+            }
+            Maintenance::Login { username, password } => {
+                self.profile = None;
+                // Never keep an old login session usable after a failed account change.
+                *session = Session::empty()?;
+                cache::clear_login_state()?;
+                *session = login::login(&username, &password).await?;
+                Ok(Response::LoggedIn)
+            }
+            Maintenance::Logout => {
+                self.profile = None;
+                *session = Session::empty()?;
+                cache::clear_login_state()?;
+                Ok(Response::LoggedOut)
+            }
+            Maintenance::Refresh => {
+                let profile = self.profile.as_deref().context("未选择 profile")?;
+                let data = http::refresh_course_data(session, profile).await?;
+                Ok(Response::Refreshed {
+                    mapping: data.mapping.lessons.len(),
+                    counts: data.counts.as_ref().map(|c| c.counts.len()),
+                    counts_from_cache: data.counts_from_cache,
+                })
+            }
+            Maintenance::Selected => {
+                let profile = self.profile.as_deref().context("未选择 profile")?;
+                let snapshot = SelectedSnapshot {
+                    profile: profile.into(),
+                    at_ms: now_ms(),
+                    selected: http::fetch_elected_lesson_ids(session, profile).await?,
+                };
+                cache::save_selected_snapshot(&snapshot)?;
+                Ok(Response::Selected(snapshot))
+            }
+            Maintenance::Channels => Ok(Response::Channels(
+                http::fetch_and_cache_channels(session).await?,
+            )),
+            Maintenance::Export { semester } => Ok(Response::Exported {
+                html: http::query_class_schedule_html(session, &semester).await?,
+                semester,
+            }),
+            Maintenance::Prepare => {
+                let profile = self.profile.as_deref().context("未选择 profile")?;
+                http::prewarm(session).await?;
+                session.prepare_election(profile).await?;
+                Ok(Response::Prepared)
+            }
+            Maintenance::ClearCache => {
+                cache::clear_derived_caches()?;
+                Ok(Response::Cleared)
+            }
         }
     }
 }

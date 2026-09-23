@@ -1,6 +1,6 @@
 [package]
 name = "course-election"
-version = "3.0.0"
+version = "3.1.0"
 edition = "2024"
 
 [[bin]]
@@ -41,6 +41,9 @@ tokio = { version = "1.53", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["test-util"] }
 
 [profile.release]
 opt-level = 3

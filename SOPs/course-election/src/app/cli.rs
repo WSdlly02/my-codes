@@ -1,9 +1,8 @@
 use super::{
     cache,
-    intent::Phase,
     output::{self, LessonQueryFilter},
-    protocol::{Command, Maintenance, Mode, Response, SOCKET_FILE, Spec},
-    support,
+    protocol::{Command, Maintenance, Phase, Response, SOCKET_FILE, Spec, Trigger},
+    render, support,
 };
 use anyhow::{Context, Result, bail, ensure};
 use chrono::{DateTime, FixedOffset};
@@ -11,7 +10,7 @@ use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use std::{path::PathBuf, time::Duration};
 
-/// How often `job wait` and `logs --follow` poll the daemon.
+/// How often `logs --follow` polls the daemon.
 const POLL: Duration = Duration::from_millis(250);
 
 #[derive(Parser)]
@@ -23,6 +22,7 @@ const POLL: Duration = Duration::from_millis(250);
 struct Cli {
     #[arg(long, global = true, default_value = ".")]
     data_dir: PathBuf,
+    /// 每行输出一个 JSON 值，供脚本和程序解析
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
@@ -33,28 +33,27 @@ struct Cli {
 enum Action {
     Status,
     Jobs,
+    /// 打开该 profile 的选课页面；取消其他 profile 的意图。
     Profile {
         id: String,
-        #[arg(long)]
-        force: bool,
     },
     Login {
         username: String,
         #[arg(long)]
         password_stdin: bool,
     },
-    Logout {
-        #[arg(long)]
-        force: bool,
-    },
+    /// 取消全部意图并清除会话。
+    Logout,
     Job {
         #[command(subcommand)]
         action: JobAction,
     },
-    Fire(Submit),
-    Drop(Submit),
-    Watch(Submit),
-    Arm(Submit),
+    /// 到点（缺省为立即）直接提交选课，不看容量。
+    Fire(Fire),
+    /// 到点（缺省为立即）提交退课。
+    Drop(Fire),
+    /// 名额读取出现空位时提交选课。
+    Watch(Watch),
     Prepare,
     Refresh,
     Channels {
@@ -92,39 +91,41 @@ enum CacheAction {
 
 #[derive(Subcommand)]
 enum JobAction {
-    /// 核对 unknown 意图的当前已选状态；不会重发写请求。
-    Reconcile {
-        id: u64,
-    },
     Show {
         id: u64,
     },
+    /// 等待意图结束；Ctrl-C 只停止等待。
     Wait {
         id: u64,
     },
-    Pause {
-        id: u64,
-    },
-    Resume {
-        id: u64,
-    },
+    /// 停止等待；已交给执行器的提交仍会完成。
     Cancel {
         id: u64,
     },
 }
 
 #[derive(Args)]
-struct Submit {
+struct Fire {
     #[arg(long)]
     lesson: String,
-    #[arg(long, value_parser = humantime::parse_duration)]
-    interval: Option<Duration>,
-    #[arg(long, value_parser = humantime::parse_duration)]
-    timeout: Option<Duration>,
+    /// RFC 3339 时刻，如 2026-09-23T13:00:00+08:00
     #[arg(long)]
-    attempts: Option<u64>,
+    at: Option<DateTime<FixedOffset>>,
+    #[arg(long, default_value_t = 1)]
+    attempts: u32,
+    #[arg(long, default_value = "500ms", value_parser = humantime::parse_duration)]
+    interval: Duration,
     #[arg(long)]
-    at: Option<String>,
+    wait: bool,
+}
+
+#[derive(Args)]
+struct Watch {
+    #[arg(long)]
+    lesson: String,
+    /// 0s 表示不设截止
+    #[arg(long, default_value = "30m", value_parser = humantime::parse_duration)]
+    timeout: Duration,
     #[arg(long)]
     dry_run: bool,
     #[arg(long)]
@@ -152,13 +153,17 @@ struct FoundLessons<'a> {
     lessons: &'a [output::LessonDisplayEntry],
 }
 
-fn print(value: &impl Serialize, json: bool) -> Result<()> {
-    let text = if json {
-        serde_json::to_string(value)?
-    } else {
-        serde_json::to_string_pretty(value)?
-    };
-    println!("{text}");
+fn json_line(value: &impl Serialize) -> Result<()> {
+    println!("{}", serde_json::to_string(value)?);
+    Ok(())
+}
+
+/// Human-readable text by default; one JSON value per line with `--json`.
+fn show<T: Serialize>(value: &T, json: bool, human: impl FnOnce(&T) -> String) -> Result<()> {
+    if json {
+        return json_line(value);
+    }
+    println!("{}", human(value));
     Ok(())
 }
 
@@ -188,20 +193,22 @@ async fn pause_or_interrupt() -> bool {
     }
 }
 
-async fn wait_job(id: u64, json: bool) -> Result<()> {
-    loop {
-        let Response::Job(job) = rpc(Command::Job { id }).await? else {
-            bail!("响应类型错误")
-        };
-        if !job.phase.active() || job.phase == Phase::Paused {
-            print(&job, json)?;
-            ensure!(job.phase == Phase::Succeeded, "意图已停止：{:?}", job.phase);
-            return Ok(());
-        }
-        if pause_or_interrupt().await {
-            bail!("停止等待；后台意图未取消");
-        }
-    }
+/// Sends a command the daemon answers when the intent ends; exits non-zero unless it succeeded.
+async fn until_end(command: Command, json: bool) -> Result<()> {
+    let response = tokio::select! {
+        response = rpc(command) => response?,
+        _ = tokio::signal::ctrl_c() => bail!("停止等待；意图仍在后台运行"),
+    };
+    show(&response, json, render::response)?;
+    let Response::Job(job) = response else {
+        bail!("响应类型错误")
+    };
+    ensure!(
+        job.progress.phase == Phase::Succeeded,
+        "意图结束：{:?}",
+        job.progress.phase
+    );
+    Ok(())
 }
 
 async fn follow_logs(follow: bool, json: bool) -> Result<()> {
@@ -219,7 +226,7 @@ async fn follow_logs(follow: bool, json: bool) -> Result<()> {
         for event in events {
             if event.sequence > sequence {
                 sequence = event.sequence;
-                print(&event, json)?;
+                show(&event, json, render::log)?;
             }
         }
         if !follow || pause_or_interrupt().await {
@@ -228,35 +235,37 @@ async fn follow_logs(follow: bool, json: bool) -> Result<()> {
     }
 }
 
-async fn submit(args: Submit, mode: Mode, json: bool) -> Result<()> {
-    let watch = mode == Mode::Watch;
-    let millis = |duration: Duration| u64::try_from(duration.as_millis()).context("时间溢出");
-    let default_interval = Duration::from_millis(if watch { 5000 } else { 500 });
-    let default_timeout = Duration::from_secs(if watch { 1800 } else { 0 });
-    let default_attempts = match mode {
-        Mode::Watch => 0,
-        Mode::Arm => 2,
-        Mode::Fire | Mode::Drop => 1,
+async fn add(lesson: String, trigger: Trigger, wait: bool, json: bool) -> Result<()> {
+    let command = Command::Add {
+        spec: Spec { lesson, trigger },
+        wait,
     };
-    let spec = Spec {
-        lesson: args.lesson,
-        interval_ms: millis(args.interval.unwrap_or(default_interval))?,
-        timeout_ms: millis(args.timeout.unwrap_or(default_timeout))?,
-        attempts: args.attempts.unwrap_or(default_attempts),
-        at_ms: args
-            .at
-            .map(|s| chrono::DateTime::parse_from_rfc3339(&s).map(|d| d.timestamp_millis()))
-            .transpose()?,
-        dry_run: args.dry_run,
-        mode,
-    };
-    let response = rpc(Command::Add { spec }).await?;
-    if args.wait
-        && let Response::Job(job) = response
-    {
-        return wait_job(job.id, json).await;
+    if wait {
+        return until_end(command, json).await;
     }
-    print(&response, json)
+    show(&rpc(command).await?, json, render::response)
+}
+
+fn millis(duration: Duration) -> u64 {
+    duration.as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+async fn fire(args: Fire, select: bool, json: bool) -> Result<()> {
+    let trigger = Trigger::Fire {
+        select,
+        at_ms: args.at.map(|at| at.timestamp_millis()),
+        attempts: args.attempts,
+        interval_ms: millis(args.interval),
+    };
+    add(args.lesson, trigger, args.wait, json).await
+}
+
+async fn watch(args: Watch, json: bool) -> Result<()> {
+    let trigger = Trigger::Watch {
+        timeout_ms: millis(args.timeout),
+        dry_run: args.dry_run,
+    };
+    add(args.lesson, trigger, args.wait, json).await
 }
 
 fn find(args: Find, json: bool) -> Result<()> {
@@ -282,7 +291,7 @@ fn find(args: Find, json: bool) -> Result<()> {
             counts_at: counts.as_ref().map(|c| c.fetched_at),
             lessons: &entries,
         };
-        return print(&found, true);
+        return json_line(&found);
     }
     println!(
         "课程缓存：{}；容量缓存：{:?}",
@@ -302,7 +311,7 @@ pub(crate) async fn run() -> Result<()> {
     let command = match cli.command {
         Action::Status => Command::Status,
         Action::Jobs => Command::Jobs,
-        Action::Profile { id, force } => Maintenance::Profile { id, force }.into(),
+        Action::Profile { id } => Maintenance::Profile { id }.into(),
         Action::Login {
             username,
             password_stdin,
@@ -316,27 +325,35 @@ pub(crate) async fn run() -> Result<()> {
             };
             Maintenance::Login { username, password }.into()
         }
-        Action::Logout { force } => Maintenance::Logout { force }.into(),
+        Action::Logout => Maintenance::Logout.into(),
         Action::Job { action } => match action {
             JobAction::Show { id } => Command::Job { id },
-            JobAction::Reconcile { id } => Maintenance::Reconcile { id }.into(),
-            JobAction::Pause { id } => Command::Pause { id },
-            JobAction::Resume { id } => Command::Resume { id },
-            JobAction::Cancel { id } => Command::Cancel { id },
-            JobAction::Wait { id } => return wait_job(id, json).await,
+            JobAction::Cancel { id } => {
+                return show(&rpc(Command::Cancel { id }).await?, json, |response| {
+                    let row = render::response(response);
+                    format!("已停止等待；已交给执行器的提交仍会完成\n{row}")
+                });
+            }
+            JobAction::Wait { id } => return until_end(Command::Wait { id }, json).await,
         },
-        Action::Fire(args) => return submit(args, Mode::Fire, json).await,
-        Action::Drop(args) => return submit(args, Mode::Drop, json).await,
-        Action::Watch(args) => return submit(args, Mode::Watch, json).await,
-        Action::Arm(args) => return submit(args, Mode::Arm, json).await,
+        Action::Fire(args) => return fire(args, true, json).await,
+        Action::Drop(args) => return fire(args, false, json).await,
+        Action::Watch(args) => return watch(args, json).await,
         Action::Prepare => Maintenance::Prepare.into(),
         Action::Refresh => Maintenance::Refresh.into(),
         Action::Channels { refresh: true } => Maintenance::Channels.into(),
-        Action::Channels { refresh: false } => return print(&cache::load_channel_cache()?, json),
+        Action::Channels { refresh: false } => {
+            let channels = cache::load_channel_cache()?;
+            return show(&channels, json, |c| render::render_channels(&c.channels));
+        }
         Action::Selected { refresh: true, .. } => Maintenance::Selected.into(),
         Action::Selected { profile, .. } => {
             let profile = profile.context("需要 --profile")?;
-            return print(&cache::load_selected_snapshot(&profile)?, json);
+            return show(
+                &cache::load_selected_snapshot(&profile)?,
+                json,
+                render::selected,
+            );
         }
         Action::Find(args) => return find(args, json),
         Action::ExportSchedule { semester, output } => {
@@ -348,7 +365,8 @@ pub(crate) async fn run() -> Result<()> {
                 bail!("响应类型错误")
             };
             std::fs::write(&path, html)?;
-            return print(&serde_json::json!({ "output": path }), json);
+            let done = format!("已导出到 {}", path.display());
+            return show(&serde_json::json!({ "output": path }), json, |_| done);
         }
         Action::Cache {
             action: CacheAction::Clear,
@@ -356,15 +374,20 @@ pub(crate) async fn run() -> Result<()> {
         Action::Cache {
             action: CacheAction::Status,
         } => {
-            let status = serde_json::json!({
-                "mappings": cache::list_mapping_cache_statuses()?,
-                "counts": cache::list_count_cache_statuses()?,
+            let mappings = cache::list_mapping_cache_statuses()?;
+            let counts = cache::list_count_cache_statuses()?;
+            let status = serde_json::json!({ "mappings": mappings, "counts": counts });
+            return show(&status, json, |_| {
+                let mappings = render::cache_statuses("课程映射", "门", &mappings);
+                format!(
+                    "{mappings}\n{}",
+                    render::cache_statuses("名额", "条", &counts)
+                )
             });
-            return print(&status, json);
         }
         Action::Logs { follow } => return follow_logs(follow, json).await,
     };
-    print(&rpc(command).await?, json)
+    show(&rpc(command).await?, json, render::response)
 }
 
 #[cfg(test)]

@@ -15,6 +15,10 @@ pub(crate) const DEFAULT_OLLAMA_URL: &str = "http://10.144.144.64:11434/api/gene
 pub(crate) const SEMESTER_ID_ENV: &str = "COURSE_ELECTION_SEMESTER_ID";
 pub(crate) const SEMESTER_ID_OF_AUTUMN_SEMESTER_OF_2025_ACADEMIC_YEAR: i32 = 395;
 
+pub(crate) fn now_ms() -> i64 {
+    Utc::now().timestamp_millis()
+}
+
 pub(crate) fn now_fixed() -> DateTime<FixedOffset> {
     Shanghai
         .from_utc_datetime(&Utc::now().naive_utc())

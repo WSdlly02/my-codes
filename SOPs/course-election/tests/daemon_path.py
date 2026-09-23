@@ -49,9 +49,10 @@ class Reply(http.server.BaseHTTPRequestHandler):
                 server.errors.append("wrong token")
             time.sleep(server.delay)
             status = server.post_status
-            data = "选课成功" if status == 200 else "server error"
+            data = server.post_reply if status == 200 else "server error"
         elif url.path == "/shmtu/stdElectCourse.action":
-            data = ""  # arm's connection prewarm
+            server.prewarms += 1
+            data = ""
         else:
             server.errors.append(url.path)
             status, data = 500, "unexpected"
@@ -83,12 +84,14 @@ def until(predicate, timeout=12):
 def main():
     with tempfile.TemporaryDirectory() as directory:
         proxy, env = fixture.start_proxy(directory, Reply)
-        proxy.log, proxy.post_times = [], []
-        proxy.full, proxy.delay, proxy.post_status, proxy.token = True, 0, 200, 20260923100000
+        proxy.log, proxy.post_times, proxy.prewarms = [], [], 0
+        proxy.full, proxy.delay, proxy.token = True, 0, 20260923100000
+        proxy.post_status, proxy.post_reply = 200, "选课成功"
         cwd = Path(directory)
         socket_path = cwd / "cache/runtime/daemon.sock"
+        daemon_cmd = [str(ROOT / "target/debug/course-electiond"), "--data-dir", directory, "--poll", "1s"]
         with (cwd / "daemon.log").open("w+") as log:
-            daemon = subprocess.Popen([str(ROOT / "target/debug/course-electiond"), "--data-dir", directory], env=env, stdout=log, stderr=log)
+            daemon = subprocess.Popen(daemon_cmd, env=env, stdout=log, stderr=log)
             try:
                 until(socket_path.exists)
 
@@ -101,80 +104,101 @@ def main():
                     assert (response.status == 200) == ok, text
                     return json.loads(text).get("data") if ok else response.status
 
-                def profile(id, force=False, ok=True):
-                    return rpc({"command": "maintenance", "op": "profile", "id": id, "force": force}, ok)
+                def maintain(op, **fields):
+                    return rpc({"command": "maintenance", "op": op, **fields})
 
-                def add(lesson, mode="watch"):
-                    return rpc({"command": "add", "spec": {"lesson": str(lesson), "mode": mode, "interval_ms": 1000, "attempts": 0 if mode == "watch" else 1, "timeout_ms": 60000, "at_ms": None, "dry_run": False}})["id"]
+                def watch(lesson):
+                    spec = {"lesson": str(lesson), "kind": "watch", "timeout_ms": 60000, "dry_run": False}
+                    return rpc({"command": "add", "spec": spec, "wait": False})["id"]
 
-                def job(i):
-                    return rpc({"command": "job", "id": i})
+                def fire(lesson, select=True, attempts=1, at_ms=None):
+                    spec = {"lesson": str(lesson), "kind": "fire", "select": select, "at_ms": at_ms, "attempts": attempts, "interval_ms": 300}
+                    return rpc({"command": "add", "spec": spec, "wait": True})["progress"]
+
+                def running(i):
+                    return i in [j["id"] for j in rpc({"command": "jobs"})]
+
+                def ended(i, phase):
+                    return any(f"意图 {i} 结束：{phase}" in e["message"] for e in rpc({"command": "logs"})["events"])
 
                 def posts():
                     return sum(row[0] == "POST" for row in proxy.log)
 
-                assert rpc({"command": "status"})["profile"] is None
-                second = subprocess.run([str(ROOT / "target/debug/course-electiond"), "--data-dir", directory], capture_output=True, timeout=5)
+                def reads():
+                    return sum("queryStdCount" in row[1] for row in proxy.log)
+
+                second = subprocess.run(daemon_cmd, capture_output=True, timeout=5)
                 assert second.returncode != 0 and rpc({"command": "status"})["profile"] is None
-                profile("3112")
-                a, b = add(101), add(102)
-                until(lambda: sum("queryStdCount" in row[1] for row in proxy.log) >= 2)
+                maintain("profile", id="3112")
+
+                # Two watches share one poller and never POST while the course is full.
+                a, b = watch(101), watch(102)
+                until(lambda: reads() >= 2)
+                before = reads()
+                time.sleep(3.2)
+                assert reads() - before <= 4, "one shared read per poll, not one per watch"
                 assert posts() == 0
-                pages = proxy.token
-                profile("3113", ok=False)
-                assert proxy.token == pages
+
+                # Cancel stops waiting; a handed-off POST still completes and is recorded.
                 rpc({"command": "cancel", "id": a})
+                until(lambda: not running(a))
+                assert ended(a, "已取消")
                 proxy.full, proxy.delay = False, 1.5
                 until(lambda: posts() == 1)
                 t = time.monotonic()
-                assert rpc({"command": "status"})["inflight"] == b
+                assert rpc({"command": "cancel", "id": b})["progress"]["phase"] == "submitting"
                 assert time.monotonic() - t < .5
-                rpc({"command": "cancel", "id": b})
-                until(lambda: job(b)["phase"] == "succeeded")
-                assert job(a)["phase"] == "cancelled"
-                assert posts() == 1 and proxy.token == pages
-                # Write is serial, read-side continues while POST is pending.
-                c = add(103)
+                until(lambda: ended(b, "成功"))
+
+                # Reads keep going while a POST is pending.
+                c = watch(103)
                 until(lambda: posts() == 2)
-                reads = sum("queryStdCount" in row[1] for row in proxy.log)
-                until(lambda: sum("queryStdCount" in row[1] for row in proxy.log) > reads)
-                profile("3113", force=True)
-                assert job(c)["phase"] == "succeeded"
+                pending = reads()
+                until(lambda: reads() > pending)
+                until(lambda: ended(c, "成功"))
+
+                # Intents end once their context is replaced.
+                proxy.full, proxy.delay = True, 0
+                d = watch(106)
+                maintain("profile", id="3113")
+                until(lambda: ended(d, "已取消"))
                 assert rpc({"command": "status"})["profile"] == "3113"
-                proxy.delay = 0
-                d = add(104, "drop")
-                until(lambda: job(d)["phase"] == "succeeded")
-                proxy.post_status = 500
-                e = add(105)
-                until(lambda: job(e)["phase"] == "unknown")
-                count = posts()
-                time.sleep(1.2)
-                assert posts() == count
-                rpc({"command": "maintenance", "op": "reconcile", "id": e})
-                assert job(e)["phase"] == "succeeded" and posts() == count
-                proxy.full = True
-                pending = add(106)
-                profile("3112", force=True)
-                assert job(pending)["phase"] == "cancelled"
-                assert rpc({"command": "status"})["profile"] == "3112"
-                # Arm fires on its own timer, not a polling tick.
-                proxy.post_status, count = 200, posts()
+
+                assert fire(104, select=False)["phase"] == "succeeded"
+
+                proxy.post_reply, count = "选课失败:未开放", posts()
+                end = fire(108, attempts=3)
+                assert (end["phase"], end["attempts"], posts()) == ("failed", 3, count + 3)
+
+                proxy.post_status, count = 500, posts()
+                assert fire(105, attempts=3)["phase"] == "unknown" and posts() == count + 1
+
+                # A timed fire warms up early and fires on its own timer.
+                proxy.post_status, proxy.post_reply, count = 200, "选课成功", posts()
+                warmed = proxy.prewarms
                 at_ms = int(time.time() * 1000) + 1500
-                arm = rpc({"command": "add", "spec": {"lesson": "107", "mode": "arm", "interval_ms": 500, "attempts": 2, "timeout_ms": 0, "at_ms": at_ms, "dry_run": False}})["id"]
-                until(lambda: job(arm)["phase"] == "succeeded")
+                assert fire(107, at_ms=at_ms)["phase"] == "succeeded"
                 late_ms = proxy.post_times[-1] * 1000 - at_ms
-                assert posts() == count + 1 and 0 <= late_ms < 200, late_ms
-                print(f"arm fired {late_ms:.0f}ms after --at")
-                result = subprocess.run([str(ROOT / "target/debug/course-election"), "--data-dir", directory, "--json", "status"], env=env, capture_output=True, timeout=5)
+                assert posts() == count + 1 and proxy.prewarms == warmed + 1 and 0 <= late_ms < 200, late_ms
+                print(f"timed fire sent {late_ms:.0f}ms after --at")
+
+                cli = [str(ROOT / "target/debug/course-election"), "--data-dir", directory]
+                result = subprocess.run([*cli, "--json", "status"], env=env, capture_output=True, timeout=5)
                 assert result.returncode == 0, result.stderr
-                assert json.loads(result.stdout)["data"]["profile"] == "3112"
-                for args in (["daemon", "stop"], ["status", "--force"]):
-                    assert subprocess.run([str(ROOT / "target/debug/course-election"), *args], capture_output=True).returncode != 0
+                assert json.loads(result.stdout)["data"]["profile"] == "3113"
+                for args in (["daemon", "stop"], ["arm"], ["job", "pause", "1"], ["status", "--force"]):
+                    assert subprocess.run([*cli, *args], capture_output=True).returncode != 0
+
+                # Logout cancels everything.
+                e = watch(109)
+                maintain("logout")
+                until(lambda: ended(e, "已取消") and rpc({"command": "jobs"}) == [])
+
                 assert not proxy.errors, proxy.errors
                 daemon.terminate()
                 assert daemon.wait(timeout=10) == 0
                 assert not socket_path.exists()
-                print("PASS: lock, shared reads/token, cancellation, force switch, drop, unknown, arm timing, CLI, cleanup")
+                print("PASS: lock, shared poller, cancel boundary, reads during POST, profile switch, drop, retries, unknown, timed fire, CLI, logout, cleanup")
             finally:
                 if daemon.poll() is None:
                     daemon.kill()

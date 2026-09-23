@@ -439,18 +439,6 @@ impl CountReader {
     }
 }
 
-pub(crate) fn transient_request_error(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<reqwest::Error>().is_some_and(|error| {
-        error.is_timeout()
-            || error.is_connect()
-            || error.is_request()
-            || error.is_body()
-            || error
-                .status()
-                .is_some_and(|status| should_retry_status(status.as_u16()))
-    })
-}
-
 pub(crate) async fn query_class_schedule_html(
     session: &Session,
     semester_id: &str,

@@ -1,31 +1,78 @@
-use super::intent::Intent;
 use crate::model::{ChannelEntry, SelectedSnapshot};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 pub(crate) const RUNTIME_DIR: &str = "cache/runtime";
 pub(crate) const SOCKET_FILE: &str = "cache/runtime/daemon.sock";
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Mode {
-    Watch,
-    Fire,
-    Drop,
-    Arm,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Spec {
     pub lesson: String,
-    pub mode: Mode,
-    pub interval_ms: u64,
-    /// zero = unlimited; includes failed preparation attempts for fire/drop/arm.
-    pub attempts: u64,
-    /// zero = no deadline.
-    pub timeout_ms: u64,
-    pub at_ms: Option<i64>,
-    pub dry_run: bool,
+    #[serde(flatten)]
+    pub trigger: Trigger,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum Trigger {
+    /// Submit at `at_ms` (or right away) regardless of capacity. `select: false` drops.
+    Fire {
+        select: bool,
+        at_ms: Option<i64>,
+        attempts: u32,
+        interval_ms: u64,
+    },
+    /// Select whenever a capacity read shows a vacancy. `timeout_ms` zero = no deadline.
+    Watch { timeout_ms: u64, dry_run: bool },
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Phase {
+    #[default]
+    Waiting,
+    /// Handed to the Executor: no longer cancellable.
+    Submitting,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Expired,
+    /// A POST may have been executed; never retried.
+    Unknown,
+}
+
+impl Phase {
+    pub fn ended(self) -> bool {
+        !matches!(self, Phase::Waiting | Phase::Submitting)
+    }
+}
+
+impl std::fmt::Display for Phase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Phase::Waiting => "等待中",
+            Phase::Submitting => "提交中",
+            Phase::Succeeded => "成功",
+            Phase::Failed => "失败",
+            Phase::Cancelled => "已取消",
+            Phase::Expired => "已过期",
+            Phase::Unknown => "结果未知",
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct Progress {
+    pub phase: Phase,
+    pub attempts: u32,
+    pub last_result: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct IntentView {
+    pub id: u64,
+    pub profile: String,
+    pub spec: Spec,
+    pub progress: Progress,
 }
 
 // Never derive Debug: Login contains a secret.
@@ -34,28 +81,47 @@ pub(crate) struct Spec {
 pub(crate) enum Command {
     Status,
     Jobs,
-    Job { id: u64 },
+    Job {
+        id: u64,
+    },
+    /// Blocks until the intent ends.
+    Wait {
+        id: u64,
+    },
     Logs,
-    Add { spec: Spec },
-    Pause { id: u64 },
-    Resume { id: u64 },
-    Cancel { id: u64 },
+    /// With `wait`, blocks until the new intent ends.
+    Add {
+        spec: Spec,
+        wait: bool,
+    },
+    /// Stops the intent's waiting; a submission already handed off still completes.
+    Cancel {
+        id: u64,
+    },
     Maintenance(Maintenance),
 }
 
-/// Operations that need the Executor's Session. Accepted one at a time; while one is
-/// pending or running, no submission is granted.
+/// Operations executed by the Executor, in order with submissions.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(crate) enum Maintenance {
-    Reconcile { id: u64 },
-    Profile { id: String, force: bool },
-    Login { username: String, password: String },
-    Logout { force: bool },
+    /// Cancels intents of other profiles.
+    Profile {
+        id: String,
+    },
+    /// Cancels all intents.
+    Login {
+        username: String,
+        password: String,
+    },
+    /// Cancels all intents.
+    Logout,
     Refresh,
     Selected,
     Channels,
-    Export { semester: String },
+    Export {
+        semester: String,
+    },
     Prepare,
     ClearCache,
 }
@@ -66,18 +132,15 @@ impl From<Maintenance> for Command {
     }
 }
 
-pub(crate) type Reply = Result<Response, String>;
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Status {
     pub profile: Option<String>,
     pub context_ready: bool,
-    pub maintenance: bool,
     pub stopping: bool,
-    pub inflight: Option<u64>,
+    pub poll_ms: u64,
     pub counts_at_ms: Option<i64>,
     pub read_error: Option<String>,
-    pub jobs: usize,
+    pub intents: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -91,8 +154,8 @@ pub(crate) struct LogEvent {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub(crate) enum Response {
     Status(Status),
-    Jobs(Vec<Intent>),
-    Job(Intent),
+    Jobs(Vec<IntentView>),
+    Job(IntentView),
     Profile {
         profile: String,
     },
@@ -104,10 +167,6 @@ pub(crate) enum Response {
         counts_from_cache: bool,
     },
     Selected(SelectedSnapshot),
-    Reconciled {
-        id: u64,
-        selected: HashMap<String, bool>,
-    },
     Channels(Vec<ChannelEntry>),
     Exported {
         html: String,
@@ -126,20 +185,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maintenance_nests_inside_command() {
-        let json = serde_json::to_value(Command::from(Maintenance::Profile {
-            id: "3112".into(),
-            force: false,
-        }))
-        .unwrap();
+    fn wire_format() {
+        let json = serde_json::to_value(Command::from(Maintenance::Profile { id: "3112".into() }))
+            .unwrap();
         assert_eq!(
             json,
-            serde_json::json!({"command": "maintenance", "op": "profile", "id": "3112", "force": false})
+            serde_json::json!({"command": "maintenance", "op": "profile", "id": "3112"})
         );
-        let back: Command = serde_json::from_value(json).unwrap();
-        assert!(matches!(
-            back,
-            Command::Maintenance(Maintenance::Profile { .. })
-        ));
+        let spec = Spec {
+            lesson: "1".into(),
+            trigger: Trigger::Watch {
+                timeout_ms: 0,
+                dry_run: false,
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&spec).unwrap(),
+            serde_json::json!({"lesson": "1", "kind": "watch", "timeout_ms": 0, "dry_run": false})
+        );
     }
 }

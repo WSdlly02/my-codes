@@ -6,8 +6,8 @@
 
 ```bash
 cargo build --release --bins
-# 终端 A，前台运行；数据目录须已存在
-./target/release/course-electiond --data-dir "$PWD"
+# 终端 A，前台运行；数据目录须已存在。--poll 是所有 watch 共享的名额读取间隔（默认 5s，至少 1s）
+./target/release/course-electiond --data-dir "$PWD" --poll 2s
 
 # 终端 B，或 Agent；两端必须使用同一个数据目录
 ./target/release/course-election login 学号
@@ -15,14 +15,14 @@ cargo build --release --bins
 ./target/release/course-election profile 3112
 ./target/release/course-election refresh
 ./target/release/course-election find 航运 --profile 3112
-./target/release/course-election watch --lesson 252279 --interval 5s
-./target/release/course-election watch --lesson 252282 --interval 5s
+./target/release/course-election fire --lesson 252279 --at 2026-09-23T13:00:00+08:00 --attempts 3 --wait
+./target/release/course-election watch --lesson 252282
 ./target/release/course-election --json jobs
 ```
 
-CLI **不启动、不停止 daemon**。在 daemon 终端按 Ctrl-C 或发送 SIGTERM 优雅关停：停止新授权，等待已发请求和已接受的维护操作收尾后退出。
+CLI **不启动、不停止 daemon**。在 daemon 终端按 Ctrl-C 或发送 SIGTERM 优雅关停：取消全部意图的等待，已交给执行器的提交收尾后退出。
 
-**意图只存在于 daemon 内存中，不跨进程继承。** daemon 退出（包括崩溃）后所有意图随之消失；重启后需重新 profile 并重新下达。崩溃时若有在途 POST，其结果只能用 `selected --refresh` 人工确认。
+**意图只存在于 daemon 内存中**：运行中的意图可以查询，结束即消失，结果留在 `logs` 里（或由 `--wait` 返回）。没有暂停/恢复，也不跨进程继承；daemon 退出（包括崩溃）后需重新 profile 并重新下达。崩溃时若有在途 POST，其结果用 `selected --refresh` 确认。
 
 构建只更新 target，**不会替换根目录现有的旧版二进制**。
 
@@ -32,54 +32,53 @@ CLI **不启动、不停止 daemon**。在 daemon 终端按 Ctrl-C 或发送 SIG
 
 | 命令 | 行为 |
 | --- | --- |
-| login USER [--password-stdin] | 默认隐藏输入密码；凭据交给 daemon 完成 CAS/OCR，不经过命令行参数 |
-| logout [--force] | 清除会话；有活动意图时需要 force |
-| profile ID [--force] | **实际打开 defaultPage**，即使 ID 相同；查询当前 profile 用 status |
-| prepare | 预热连接并确保当前上下文；不无故旋转 token |
+| login USER [--password-stdin] | 登录完成后全部意图结束；默认隐藏输入密码，凭据交给 daemon 完成 CAS/OCR |
+| logout | 清除会话，全部意图随之结束 |
+| profile ID | **实际打开 defaultPage**（即使 ID 相同），其他 profile 的意图随之结束；当前 profile 见 status |
+| prepare | 预热连接并确保页面已打开；不无故旋转 token |
 | refresh | 显式刷新课程映射/容量缓存，更新页面上下文 |
 | find [名称] --profile ID [--id ID\|--code CODE] [--selected] | 纯离线查缓存；无缓存直接报错，不偷偷联网 |
 | channels [--refresh] | 默认离线，refresh 才联网 |
 | selected --profile ID / selected --refresh | 分别读已选缓存 / 从服务器刷新 |
-| fire / drop --lesson ID [--attempts N] [--interval 500ms] [--wait] | 创建选课 / 退课意图；默认尝试一次，0 为不限次数 |
-| watch --lesson ID [--interval 5s] [--timeout 30m] [--dry-run] [--wait] | 动态捡漏，满员时不 POST；间隔至少 1s，dry-run 只记录机会 |
-| arm --lesson ID --at RFC3339 [--attempts 2] [--wait] | 定时意图，提前约 5 秒预热，沿用当前 token |
-| status / jobs / job show ID | 快照查询，不等待上游写请求 |
-| job pause / resume / cancel ID | 控制后续执行；cancel 不是退课 |
-| job wait ID | 等待结束/暂停；Ctrl-C 只停止等待，不取消后台意图 |
-| job reconcile ID | 对 unknown 意图查询当前已选状态，记录目标是否达成；**不重发 POST，也不证明原请求是否执行** |
-| logs [--follow] | daemon 内存日志环（512 条）；缺口会提示，jobs 为权威状态 |
+| fire --lesson ID [--at RFC3339] [--attempts 1] [--interval 500ms] [--wait] | 到点（缺省立即）直接提交选课，不看容量；有 `--at` 时提前 5 秒预热 |
+| drop （参数同 fire） | 同 fire，提交退课 |
+| watch --lesson ID [--timeout 30m] [--dry-run] [--wait] | 捡漏：名额读取出现空位才提交选课；`--timeout 0s` 不设截止，dry-run 只记录机会 |
+| status / jobs / job show ID | 快照查询，不等待上游请求 |
+| job wait ID | 等待意图结束；Ctrl-C 只停止等待 |
+| job cancel ID | 停止意图的等待；已交给执行器的提交仍会完成并记录。cancel 不是退课 |
+| logs [--follow] | daemon 内存日志环（512 条），含每个意图的最终结果 |
 | export-schedule [--semester ID] [--output FILE] | 共用登录会话导出 HTML 课程表；默认学期保留原有自动滚动规则 |
 | cache status / cache clear | 离线查看缓存概况 / 请求 daemon 清除课程映射和容量缓存 |
 
-`--lesson` 也接受缓存中唯一匹配的完整课程名；有歧义时必须用 ID。无需再维护独立 target。为避免互相冲突，同一 profile/课程只允许一个活动或 unknown 意图。
+`--lesson` 也接受缓存中唯一匹配的完整课程名；有歧义时必须用 ID。同一 profile/课程同时只允许一个运行中的意图。
 
-默认 watch 的 timeout 从创建时开始计时，暂停也不延长截止时间；`--timeout 0s` 禁用截止。fire/drop 默认不限总时长，但有次数上限。业务失败可以重试，HTTP 错误、断连、无法识别的提交响应一律 unknown。准备失败也计入 fire/drop/arm 的尝试上限。达到 deadline 后不授权新 POST，已经授权的请求仍收尾。
+服务器明确拒绝（未开放、已满等）可以重试，每次提交计一次尝试；HTTP 错误、断连、无法识别的响应记为 unknown，绝不自动重试。
 
 ## 运行时与取消边界
 
 ```text
-CLI（clap） → Unix socket 上的 HTTP（axum） → Manager（意图池、调度、授权）
-                                            ↑                ↓
-                                 Read side（共享名额读取）   Executor（唯一 Session、串行执行）
+CLI（clap） → Unix socket 上的 HTTP（axum） → Runtime（运行中意图的注册表）
+                                                  │ 每个意图一个 task
+                                                  ▼
+                   名额轮询（watch channel） ──→ 意图 task ──→ Executor actor（唯一 Session，按到达顺序串行）
 ```
 
-- Manager 只做决策、不做网络请求；调度规则都是 Manager 上的纯方法，有单元测试。主循环按"下一个需要行动的时刻"精确休眠，被请求、Executor 结果或名额读取结果唤醒，不做固定间隔轮询。
-- 一个共享轮询器按活动 watch 中最短间隔读容量，再唤醒有空位的意图，不为每门课创建轮询循环。
-- Executor 是唯一可打开页面、切换会话和提交写入的所有者，一次只执行一项工作，结束时报告当前页面上下文。读侧只有容量查询能力；POST 在途时读侧仍能运行。
-- Manager 只在名额读取结束（必要时先取消它）之后，才下发可能改变页面上下文的工作（维护操作、需要准备页面的意图）。因此到达的读取结果总是属于当前上下文。
-- 提交前，Executor 先准备，再向 Manager 请求授权。Manager 核验 profile、截止时间、取消状态、watch 空位后把意图置为 InFlight，才放行一次 POST。
-- 取消在授权前生效：不发 POST；授权后取消仅在 POST 返回后生效，真实结果仍记录。关闭 CLI 或断开连接不会取消已接受指令。
-- profile 切换检查其他 profile 的活动意图，未 force 则在访问网站前拒绝。force 取消它们的后续执行，等在途 POST 收尾，再加载新页面；历史结果保留。
-- 维护请求只接纳一个，期间不再授权新提交；忙时明确报错，不无限排队。
-- unknown 不能直接 cancel/resume，`job reconcile` 核对后才能新建同课意图。
+- **意图 = 一个 task**：等待触发（fire 等时刻，watch 等一次新鲜的空位读取），把提交交给 Executor，失败则按规则重试或结束。
+- **取消与截止只作用于等待**：用 `CancellationToken` 和 `timeout_at` 包住等待。提交一旦交给 Executor 就一定完成，结果记入意图；此后的取消只阻止后续重试。
+- **Executor 是 actor**：独占 `Session`，通过 channel 接收"确保页面 / 提交 / 维护"请求，逐个执行，先到先服务。
+- **一个共享轮询器**：只在有 watch 运行且页面就绪时按 `--poll` 读名额，用 watch channel 发布最新一次读取。watch 只对订阅之后的新读取做出反应，同一次读取不会触发两次提交。
+- **读写不交叠**：页面上下文变化（打开 defaultPage、登录、切换 profile）持有 RwLock 写锁，名额读取持有读锁；提交不取锁，POST 在途时读取照常进行。
+- **意图绑定上下文**：意图的每次等待都同时监听 Executor 发布的 profile，一旦不再是自己的（切换 profile、login、logout，或切换失败导致没有 profile），就以"上下文已切换"结束。所以切换期间才被接纳的意图也会被收掉，与发起切换的请求是否还连着无关。已交给 Executor 的提交排在切换之前的会正常完成，排在之后的会因 profile 不符而不发送。
 
 ## token 与热路径
 
-`Session` 是页面上下文唯一所有者。profile 命令打开页面，从 HTML 隐藏字段取得真实 `elecSessionTime`；之后 fire/drop/watch/arm 共享，不从 Date 头猜时间，不按命令重复 GET。
+`Session` 是页面上下文唯一所有者。profile 命令打开页面，从 HTML 隐藏字段取得真实 `elecSessionTime`；之后所有意图共享，不从 Date 头猜时间，不按命令重复 GET。
 
-选课提交真实 token；退课同样需要页面初始化，但参数仍为 `undefined`。refresh、selected/reconcile 等实际加载页面的操作会更新同一个上下文。服务端明确返回“同时打开多个选课页面”才失效它；下一次允许的尝试先重建，watch 还需重新读取空位。
+**所有准备都在触发前完成**。定时 fire 在 T−5s 预热连接并确认页面已打开；watch 在每轮等待前确认页面已打开。触发后只剩一次 channel 跳转和一次 POST。
 
-连接预热复用长期存活的 reqwest Client/连接池；prepare 与 arm 提前预热都不主动清除有效 token。**外部浏览器/其他进程仍可使 token 失效**，请避免同时操作。arm 与其他写意图共用串行 Executor，无法保证繁忙时精确卡秒；需精确时点时请提前暂停其他写意图。
+选课提交真实 token；退课同样需要页面初始化，但参数仍为 `undefined`。refresh、selected 等实际加载页面的操作会更新同一个上下文。服务端明确返回"同时打开多个选课页面"才使页面失效，意图在下一轮等待开始前重新打开，不放到下次触发之后。
+
+连接预热复用长期存活的 reqwest Client/连接池，预热不主动清除有效 token。**外部浏览器/其他进程仍可使 token 失效**，请避免同时操作。Executor 串行：开抢时刻若正有别的提交在途，这次 fire 会排在它之后。另外时刻 T 以本机时钟为准，开抢前请确认 NTP 已同步。
 
 ## 本地 IPC 与数据
 
@@ -87,7 +86,7 @@ daemon 监听 `cache/runtime/daemon.sock`，runtime 目录权限 0700，访问�
 
 Cookie、课程映射/容量/已选数据写在 cache，原子替换避免读到半份 JSON。缓存目录包含敏感信息，勿提交或分享。不同数据目录不会协调学校的单会话限制，不要据此运行多个真实选课 daemon。
 
-默认 CLI 输出可读 JSON；`--json` 输出单行结构化 JSON，写入接受响应并不等于课程已选中，须查 job 或加 --wait。API 为 socket 上的 `POST /v1/command`，协议类型定义在 `src/app/protocol.rs`；维护类命令形如 `{"command":"maintenance","op":"refresh"}`。没有停止 daemon 的 API。
+CLI 默认输出给人看的文本（课程名取自本地课程映射缓存，没有缓存时只显示 ID）；`--json` 每行输出一个 JSON 值，供脚本和程序解析。意图被接受不等于课程已选中，须查 job、logs 或加 --wait。API 为 socket 上的 `POST /v1/command`，协议类型定义在 `src/app/protocol.rs`；维护类命令形如 `{"command":"maintenance","op":"refresh"}`。没有停止 daemon 的 API。
 
 ## 登录与导出
 
@@ -105,4 +104,4 @@ cargo build --bins
 python3 tests/daemon_path.py
 ```
 
-daemon_path 通过 `tests/fixture.py` 的本地 TLS CONNECT 代理模拟教务系统，不访问真实学校网站；覆盖单实例锁、共享读取/token、取消、强制切换、drop、未知结果、arm 定时精度、CLI 与退出清理。真实服务器在共享 Session 下读写并行的行为仍需实机验证，本地测试不代表真实抢课成功。
+daemon_path 通过 `tests/fixture.py` 的本地 TLS CONNECT 代理模拟教务系统，不访问真实学校网站；覆盖单实例锁、共享轮询、取消边界、POST 在途时的读取、profile 切换、drop、重试、unknown、定时精度、CLI、logout 与退出清理。意图 task 的定时与取消逻辑另有基于 tokio 暂停时钟的单元测试。真实服务器在共享 Session 下读写并行的行为仍需实机验证，本地测试不代表真实抢课成功。

@@ -1,15 +1,14 @@
 use super::{
     api,
     protocol::{RUNTIME_DIR, SOCKET_FILE},
-    runtime,
+    runtime::Runtime,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use clap::Parser;
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{fs, future::IntoFuture, os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 use tokio::{
     net::UnixListener,
     signal::unix::{SignalKind, signal},
-    sync::mpsc,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -21,10 +20,14 @@ use tokio_util::sync::CancellationToken;
 struct Args {
     #[arg(long, default_value = ".")]
     data_dir: PathBuf,
+    /// 所有 watch 共享的名额读取间隔
+    #[arg(long, default_value = "5s", value_parser = humantime::parse_duration)]
+    poll: Duration,
 }
 
 pub(crate) async fn run() -> Result<()> {
     let args = Args::parse();
+    ensure!(args.poll >= Duration::from_secs(1), "--poll 至少 1s");
     std::env::set_current_dir(&args.data_dir).context("打开数据目录失败")?;
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -52,16 +55,16 @@ pub(crate) async fn run() -> Result<()> {
         on_signal.cancel();
     });
 
-    let (sender, receiver) = mpsc::channel(64);
-    let stopped = shutdown.clone().cancelled_owned();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, api::router(sender))
-            .with_graceful_shutdown(stopped)
-            .await
-    });
-    let result = runtime::run(receiver, shutdown.clone()).await;
-    shutdown.cancel();
+    let runtime = Runtime::start(args.poll)?;
+    let server = tokio::spawn(
+        axum::serve(listener, api::router(runtime.clone()))
+            .with_graceful_shutdown(shutdown.clone().cancelled_owned())
+            .into_future(),
+    );
+    shutdown.cancelled().await;
+    // Ends intents first, so requests waiting on them can answer before the server stops.
+    runtime.shutdown().await;
     server.await??;
     let _ = fs::remove_file(SOCKET_FILE);
-    result
+    Ok(())
 }

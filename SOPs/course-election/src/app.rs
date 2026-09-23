@@ -3,11 +3,11 @@ mod cache;
 mod cli;
 mod daemon;
 mod http;
-mod intent;
 mod login;
 mod output;
 mod parser;
 mod protocol;
+mod render;
 mod runtime;
 mod support;
 
