@@ -212,12 +212,6 @@ impl Actor {
     async fn maintain(&mut self, maintenance: Maintenance) -> Result<Response> {
         let session = &mut self.session;
         match maintenance {
-            Maintenance::Profile { id } => {
-                self.profile = None;
-                session.select_profile(&id).await?;
-                self.profile = Some(id.clone());
-                Ok(Response::Profile { profile: id })
-            }
             Maintenance::Login { username, password } => {
                 self.profile = None;
                 // Never keep an old login session usable after a failed account change.
@@ -232,17 +226,26 @@ impl Actor {
                 cache::clear_login_state()?;
                 Ok(Response::LoggedOut)
             }
-            Maintenance::Refresh => {
-                let profile = self.profile.as_deref().context("未选择 profile")?;
+            Maintenance::SyncProfiles => Ok(Response::Profiles(
+                http::fetch_and_cache_channels(session).await?,
+            )),
+            Maintenance::UseProfile { id } => {
+                self.profile = None;
+                session.select_profile(&id).await?;
+                self.profile = Some(id.clone());
+                Ok(Response::ProfileInUse { profile: id })
+            }
+            Maintenance::SyncCourses => {
+                let profile = self.profile.as_deref().context("未进入 profile")?;
                 let data = http::refresh_course_data(session, profile).await?;
-                Ok(Response::Refreshed {
-                    mapping: data.mapping.lessons.len(),
+                Ok(Response::CoursesSynced {
+                    courses: data.mapping.lessons.len(),
                     counts: data.counts.as_ref().map(|c| c.counts.len()),
                     counts_from_cache: data.counts_from_cache,
                 })
             }
-            Maintenance::Selected => {
-                let profile = self.profile.as_deref().context("未选择 profile")?;
+            Maintenance::SyncSelected => {
+                let profile = self.profile.as_deref().context("未进入 profile")?;
                 let snapshot = SelectedSnapshot {
                     profile: profile.into(),
                     at_ms: now_ms(),
@@ -251,23 +254,10 @@ impl Actor {
                 cache::save_selected_snapshot(&snapshot)?;
                 Ok(Response::Selected(snapshot))
             }
-            Maintenance::Channels => Ok(Response::Channels(
-                http::fetch_and_cache_channels(session).await?,
-            )),
-            Maintenance::Export { semester } => Ok(Response::Exported {
+            Maintenance::ExportSchedule { semester } => Ok(Response::Schedule {
                 html: http::query_class_schedule_html(session, &semester).await?,
                 semester,
             }),
-            Maintenance::Prepare => {
-                let profile = self.profile.as_deref().context("未选择 profile")?;
-                http::prewarm(session).await?;
-                session.prepare_election(profile).await?;
-                Ok(Response::Prepared)
-            }
-            Maintenance::ClearCache => {
-                cache::clear_derived_caches()?;
-                Ok(Response::Cleared)
-            }
         }
     }
 }

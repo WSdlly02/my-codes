@@ -12,15 +12,16 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// 选课后台：持有登录会话并执行意图。前台运行，Ctrl-C 或 SIGTERM 优雅退出。
+///
+/// 通过 <数据目录>/cache/runtime/daemon.sock 接收 course-election 的指令；同一数据目录只能运行一个实例。
 #[derive(Parser)]
-#[command(
-    name = "course-electiond",
-    about = "选课后台：前台运行，使用 SIGINT/SIGTERM 优雅退出"
-)]
+#[command(name = "course-electiond", version)]
 struct Args {
+    /// 数据目录（存放 Cookie、课程缓存和 socket），须已存在
     #[arg(long, default_value = ".")]
     data_dir: PathBuf,
-    /// 所有 watch 共享的名额读取间隔
+    /// 所有 watch 共享的名额读取间隔，至少 1s；越短越早发现空位，对服务器的压力也越大
     #[arg(long, default_value = "5s", value_parser = humantime::parse_duration)]
     poll: Duration,
 }

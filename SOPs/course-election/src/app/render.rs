@@ -5,7 +5,7 @@ use super::{
     support::now_ms,
 };
 use crate::model::{ChannelEntry, LessonMappingCache, SelectedSnapshot};
-use chrono::TimeZone;
+use chrono::{DateTime, FixedOffset, TimeZone};
 use chrono_tz::Asia::Shanghai;
 use std::{collections::HashMap, time::Duration};
 
@@ -16,26 +16,26 @@ pub(crate) fn response(response: &Response) -> String {
         Response::Jobs(jobs) if jobs.is_empty() => "没有运行中的意图".into(),
         Response::Jobs(jobs) => lines(jobs.iter().map(|job| intent(job, &mut names))),
         Response::Job(job) => intent(job, &mut names),
-        Response::Profile { profile } => format!("已打开 profile {profile} 的选课页面"),
         Response::LoggedIn => "已登录".into(),
         Response::LoggedOut => "已退出登录".into(),
-        Response::Refreshed {
-            mapping,
+        Response::Profiles(profiles) => self::profiles(profiles),
+        Response::ProfileInUse { profile } => {
+            format!("已进入 profile {profile}，选课页面就绪")
+        }
+        Response::CoursesSynced {
+            courses,
             counts,
             counts_from_cache,
         } => {
             let counts = match counts {
-                Some(n) if *counts_from_cache => format!("{n} 条（读取失败，沿用缓存）"),
+                Some(n) if *counts_from_cache => format!("{n} 条（读取失败，沿用旧缓存）"),
                 Some(n) => format!("{n} 条"),
                 None => "无".into(),
             };
-            format!("课程映射 {mapping} 门；名额 {counts}")
+            format!("已同步课程目录 {courses} 门；名额 {counts}")
         }
         Response::Selected(snapshot) => selected(snapshot),
-        Response::Channels(channels) => render_channels(channels),
-        Response::Exported { semester, .. } => format!("已导出学期 {semester} 的课程表"),
-        Response::Prepared => "连接已预热，选课页面就绪".into(),
-        Response::Cleared => "已清除课程映射和名额缓存".into(),
+        Response::Schedule { semester, .. } => format!("已取得学期 {semester} 的课表"),
         Response::Logs { events, .. } if events.is_empty() => "暂无日志".into(),
         Response::Logs { events, .. } => lines(events.iter().map(log)),
     }
@@ -61,7 +61,7 @@ pub(crate) fn selected(snapshot: &SelectedSnapshot) -> String {
     lines(std::iter::once(header).chain(rows))
 }
 
-pub(crate) fn render_channels(channels: &[ChannelEntry]) -> String {
+pub(crate) fn profiles(channels: &[ChannelEntry]) -> String {
     if channels.is_empty() {
         return "没有选课轮次".into();
     }
@@ -77,19 +77,11 @@ pub(crate) fn render_channels(channels: &[ChannelEntry]) -> String {
     }))
 }
 
-/// Rows of `(profile, entries, fetched at)` as listed by the cache module.
-pub(crate) fn cache_statuses(title: &str, unit: &str, rows: &[(String, usize, String)]) -> String {
-    if rows.is_empty() {
-        return format!("{title}：无");
-    }
-    lines(rows.iter().map(|(profile, count, at)| {
-        format!(
-            "{}profile {}  {}  {at}",
-            pad(title, 10),
-            pad(profile, 6),
-            pad(&format!("{count} {unit}"), 8)
-        )
-    }))
+/// A cache timestamp, in Beijing time.
+pub(crate) fn when(at: &DateTime<FixedOffset>) -> String {
+    at.with_timezone(&Shanghai)
+        .format("%m-%d %H:%M:%S")
+        .to_string()
 }
 
 fn render_status(s: &Status) -> String {

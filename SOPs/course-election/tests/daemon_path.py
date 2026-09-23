@@ -129,7 +129,7 @@ def main():
 
                 second = subprocess.run(daemon_cmd, capture_output=True, timeout=5)
                 assert second.returncode != 0 and rpc({"command": "status"})["profile"] is None
-                maintain("profile", id="3112")
+                maintain("use_profile", id="3112")
 
                 # Two watches share one poller and never POST while the course is full.
                 a, b = watch(101), watch(102)
@@ -160,7 +160,7 @@ def main():
                 # Intents end once their context is replaced.
                 proxy.full, proxy.delay = True, 0
                 d = watch(106)
-                maintain("profile", id="3113")
+                maintain("use_profile", id="3113")
                 until(lambda: ended(d, "已取消"))
                 assert rpc({"command": "status"})["profile"] == "3113"
 
@@ -186,7 +186,7 @@ def main():
                 result = subprocess.run([*cli, "--json", "status"], env=env, capture_output=True, timeout=5)
                 assert result.returncode == 0, result.stderr
                 assert json.loads(result.stdout)["data"]["profile"] == "3113"
-                for args in (["daemon", "stop"], ["arm"], ["job", "pause", "1"], ["status", "--force"]):
+                for args in (["daemon", "stop"], ["arm"], ["jobs"], ["prepare"], ["job", "pause", "1"], ["status", "--force"]):
                     assert subprocess.run([*cli, *args], capture_output=True).returncode != 0
 
                 # Logout cancels everything.

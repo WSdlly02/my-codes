@@ -2,7 +2,6 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Utc};
 use chrono_tz::Asia::Shanghai;
 use std::env;
-use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -23,14 +22,6 @@ pub(crate) fn now_fixed() -> DateTime<FixedOffset> {
     Shanghai
         .from_utc_datetime(&Utc::now().naive_utc())
         .fixed_offset()
-}
-
-pub(crate) fn format_time<Tz>(dt: DateTime<Tz>) -> String
-where
-    Tz: TimeZone,
-    Tz::Offset: Display,
-{
-    dt.format("%Y-%m-%d %H:%M:%S %Z").to_string()
 }
 
 pub(crate) fn should_retry_status(status: u16) -> bool {

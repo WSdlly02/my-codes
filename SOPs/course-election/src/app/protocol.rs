@@ -101,29 +101,43 @@ pub(crate) enum Command {
     Maintenance(Maintenance),
 }
 
-/// Operations executed by the Executor, in order with submissions.
+/// Operations executed by the Executor, in order with submissions. Intents whose profile
+/// is no longer the current one end by themselves.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(crate) enum Maintenance {
-    /// Cancels intents of other profiles.
-    Profile {
-        id: String,
-    },
-    /// Cancels all intents.
     Login {
         username: String,
         password: String,
     },
-    /// Cancels all intents.
     Logout,
-    Refresh,
-    Selected,
-    Channels,
-    Export {
+    /// Fetches the list of election rounds (profiles) into the cache.
+    SyncProfiles,
+    /// Opens the election page of this profile, obtaining its token.
+    UseProfile {
+        id: String,
+    },
+    /// Reopens the page and caches the current profile's courses and capacity.
+    SyncCourses,
+    /// Caches the current profile's selected courses.
+    SyncSelected,
+    ExportSchedule {
         semester: String,
     },
-    Prepare,
-    ClearCache,
+}
+
+impl std::fmt::Display for Maintenance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Maintenance::Login { username, .. } => write!(f, "登录 {username}"),
+            Maintenance::Logout => f.write_str("退出登录"),
+            Maintenance::SyncProfiles => f.write_str("同步轮次列表"),
+            Maintenance::UseProfile { id } => write!(f, "进入 profile {id}"),
+            Maintenance::SyncCourses => f.write_str("同步课程目录"),
+            Maintenance::SyncSelected => f.write_str("同步已选课程"),
+            Maintenance::ExportSchedule { semester } => write!(f, "导出学期 {semester} 的课表"),
+        }
+    }
 }
 
 impl From<Maintenance> for Command {
@@ -156,24 +170,22 @@ pub(crate) enum Response {
     Status(Status),
     Jobs(Vec<IntentView>),
     Job(IntentView),
-    Profile {
-        profile: String,
-    },
     LoggedIn,
     LoggedOut,
-    Refreshed {
-        mapping: usize,
+    Profiles(Vec<ChannelEntry>),
+    ProfileInUse {
+        profile: String,
+    },
+    CoursesSynced {
+        courses: usize,
         counts: Option<usize>,
         counts_from_cache: bool,
     },
     Selected(SelectedSnapshot),
-    Channels(Vec<ChannelEntry>),
-    Exported {
+    Schedule {
         html: String,
         semester: String,
     },
-    Prepared,
-    Cleared,
     Logs {
         events: Vec<LogEvent>,
         latest: u64,
@@ -186,11 +198,12 @@ mod tests {
 
     #[test]
     fn wire_format() {
-        let json = serde_json::to_value(Command::from(Maintenance::Profile { id: "3112".into() }))
-            .unwrap();
+        let json =
+            serde_json::to_value(Command::from(Maintenance::UseProfile { id: "3112".into() }))
+                .unwrap();
         assert_eq!(
             json,
-            serde_json::json!({"command": "maintenance", "op": "profile", "id": "3112"})
+            serde_json::json!({"command": "maintenance", "op": "use_profile", "id": "3112"})
         );
         let spec = Spec {
             lesson: "1".into(),

@@ -104,7 +104,7 @@ impl Runtime {
             tasks: TaskTracker::new(),
         });
         tokio::spawn(runtime.clone().poll_capacity(gate));
-        runtime.log("daemon 已启动；执行 profile <id> 显式选择上下文");
+        runtime.log("daemon 已启动；执行 profile use <ID> 进入选课轮次");
         Ok(runtime)
     }
 
@@ -182,17 +182,18 @@ impl Runtime {
             }
             Command::Maintenance(maintenance) => {
                 ensure!(!self.shutdown.is_cancelled(), "正在关停");
-                if let Maintenance::Profile { id } = &maintenance {
+                if let Maintenance::UseProfile { id } = &maintenance {
                     ensure!(
                         !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()),
                         "profile 必须是数字 ID"
                     );
                 }
                 // Intents of a replaced context end by themselves once it is published.
+                let what = maintenance.to_string();
                 let result = self.exec.maintain(maintenance).await;
                 self.log(match &result {
-                    Ok(_) => "维护操作完成".to_string(),
-                    Err(e) => format!("维护操作失败：{e:#}"),
+                    Ok(_) => format!("{what}：完成"),
+                    Err(e) => format!("{what}：失败，{e:#}"),
                 });
                 result
             }
@@ -220,7 +221,7 @@ impl Runtime {
         let profile = context
             .profile
             .filter(|_| context.reader.is_some())
-            .context("请先成功执行 profile <id>")?;
+            .context("请先 profile use <ID> 进入选课轮次")?;
         if let Trigger::Fire { attempts, .. } = spec.trigger {
             ensure!(attempts >= 1, "attempts 至少为 1");
         }
