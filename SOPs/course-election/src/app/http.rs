@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::DateTime;
 use reqwest::cookie::{CookieStore, Jar};
 use reqwest::header::{
-    ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HeaderMap, HeaderValue, ORIGIN, REFERER,
+    ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HeaderMap, HeaderValue, LOCATION, ORIGIN, REFERER,
 };
 use reqwest::{Client, Method, Response, StatusCode, Url};
 use std::collections::HashMap;
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use crate::app::cache::{
     load_count_snapshot, save_channel_cache, save_cookies, save_count_snapshot, save_mapping_cache,
 };
+use crate::app::login::{CAS_HOST, GATEWAY_HOST};
 use crate::app::parser::{
     build_lesson_count_snapshot, build_lesson_mapping_cache, parse_channels, parse_count_payload,
     parse_elec_session_time, parse_elected_ids, parse_lesson_payload, parse_unique_std_id,
@@ -146,6 +147,11 @@ impl Session {
             .connect_timeout(Duration::from_secs(5))
             .pool_idle_timeout(Duration::from_secs(60))
             .pool_max_idle_per_host(2)
+            // A busy HTTP/2 connection is never idle, so without pings a silently dead one
+            // keeps timing out every request. Pings drop it within ~15s instead.
+            .http2_keep_alive_interval(Duration::from_secs(10))
+            .http2_keep_alive_timeout(Duration::from_secs(5))
+            .http2_keep_alive_while_idle(true)
             .redirect(reqwest::redirect::Policy::none())
             .cookie_provider(jar.clone())
             .build()
@@ -622,11 +628,42 @@ async fn fetch_class_schedule_table_html(
     response.text().await.context("读取课表详情失败")
 }
 
-fn reject_redirect(response: &Response, operation: &str) -> Result<()> {
-    if response.status().is_redirection() {
-        bail!("{operation} 被重定向，登录态或通道状态可能无效");
+/// A request was redirected to the gateway or CAS login page: the login is gone.
+#[derive(Debug)]
+pub(crate) struct LoginLost;
+
+impl std::fmt::Display for LoginLost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("登录已失效：被重定向到登录页")
     }
-    Ok(())
+}
+
+impl std::error::Error for LoginLost {}
+
+pub(crate) fn login_lost(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<LoginLost>())
+}
+
+fn reject_redirect(response: &Response, operation: &str) -> Result<()> {
+    if !response.status().is_redirection() {
+        return Ok(());
+    }
+    let location = response
+        .headers()
+        .get(LOCATION)
+        .and_then(|v| v.to_str().ok());
+    Err(redirect_error(operation, location))
+}
+
+fn redirect_error(operation: &str, location: Option<&str>) -> anyhow::Error {
+    let to_login = location
+        .and_then(|location| Url::parse(location).ok())
+        .is_some_and(|url| matches!(url.host_str(), Some(GATEWAY_HOST | CAS_HOST)));
+    if to_login {
+        anyhow::Error::new(LoginLost).context(format!("{operation}失败"))
+    } else {
+        anyhow!("{operation} 被重定向，登录态或通道状态可能无效")
+    }
 }
 
 fn parse_set_cookie(value: &str, url: &Url) -> Option<CookieUpdate> {
@@ -715,8 +752,22 @@ fn cookie_header_value(cookie: &SavedCookie) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_set_cookie;
+    use super::{login_lost, parse_set_cookie, redirect_error};
     use reqwest::Url;
+
+    #[test]
+    fn only_redirects_to_a_login_page_mean_the_login_is_lost() {
+        let gateway = "https://ng.shmtu.edu.cn/wengine-auth/login?id=170&path=/";
+        let cas = "https://sso.shmtu.edu.cn/cas/login?service=x";
+        assert!(login_lost(&redirect_error("名额查询", Some(gateway))));
+        assert!(login_lost(&redirect_error("选课提交", Some(cas))));
+        assert!(!login_lost(&redirect_error(
+            "名额查询",
+            Some("/shmtu/home.action")
+        )));
+        assert!(!login_lost(&redirect_error("名额查询", None)));
+        assert!(!login_lost(&anyhow::anyhow!("operation timed out")));
+    }
 
     #[test]
     fn host_only_cookie_keeps_response_host() {

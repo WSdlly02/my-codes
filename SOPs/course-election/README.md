@@ -35,7 +35,7 @@ CLI **不启动、不停止 daemon**。在 daemon 终端按 Ctrl-C 或发送 SIG
 
 | 命令 | 行为 |
 | --- | --- |
-| status | daemon 概况：当前 profile、选课页面、名额读取、运行中意图 |
+| status | daemon 概况：登录时长或失效时间、当前 profile、选课页面、名额读取、运行中意图 |
 | login 学号 [--password-stdin] / logout | 登录（凭据交给 daemon 完成 CAS/OCR）/ 退出并清除 Cookie；完成后全部意图结束 |
 | profile list [--sync] | 选课轮次及其 profile ID；默认读缓存，`--sync` 先从服务器同步 |
 | profile use ID | 进入轮次：**实际打开 defaultPage**（即使 ID 相同）取得 token；其他 profile 的意图随之结束 |
@@ -87,7 +87,11 @@ CLI（clap） → Unix socket 上的 HTTP（axum） → Runtime（运行中意�
 
 选课提交真实 token；退课同样需要页面初始化，但参数仍为 `undefined`。`course sync` 等实际加载页面的操作会更新同一个上下文。服务端明确返回"同时打开多个选课页面"才使页面失效，意图在下一轮等待开始前重新打开，不放到下次触发之后。
 
-**预热**：对 `stdElectCourse.action`（轮次列表页，不是 defaultPage，不会换 token）发一次 GET，让连接池里留下一条已完成 TCP+TLS 握手的连接，T 时刻的 POST 直接复用。2026-09 实测：前端为 nginx、协商 HTTP/2；握手约 24ms，新连接上的请求约 63ms、复用连接约 31ms；服务端在空闲 65s 后关闭连接，而客户端连接池 60s 即丢弃空闲连接，所以 T−5s 建立的连接在 T 时刻必然可用，也不会碰上服务端恰好关闭连接的竞态。watch 的名额轮询本身就保持着连接，预热主要服务于长时间空闲后的定时 fire。**外部浏览器/其他进程仍可使 token 失效**，请避免同时操作。Executor 串行：开抢时刻若正有别的提交在途，这次 fire 会排在它之后。另外时刻 T 以本机时钟为准，开抢前请确认 NTP 已同步。
+**预热**：对 `stdElectCourse.action`（轮次列表页，不是 defaultPage，不会换 token）发一次 GET，让连接池里留下一条已完成 TCP+TLS 握手的连接，T 时刻的 POST 直接复用。2026-09 实测：前端为 nginx、协商 HTTP/2；握手约 24ms，新连接上的请求约 63ms、复用连接约 31ms；服务端在空闲 65s 后关闭连接，而客户端连接池 60s 即丢弃空闲连接，所以 T−5s 建立的连接在 T 时刻必然可用，也不会碰上服务端恰好关闭连接的竞态。watch 的名额轮询本身就保持着连接，预热主要服务于长时间空闲后的定时 fire。
+
+**HTTP/2 保活**：客户端每 10s 发一次 HTTP/2 PING，5s 内没有回应就丢弃这条连接，下个请求新建连接。一条被持续使用的连接永远不会因空闲被回收，如果它在中间链路上悄悄断了，没有 PING 时每个请求都会在上面等满超时（2026-09-24 实测：watch 从 09:28 起每次读取都超时，直到手动停止）。PING 在后台进行，不占用提交路径。
+
+**登录时长**：jwxt 前面有一层 wengine 网关（`ng.shmtu.edu.cn`），Cookie 都没有过期时间，登录能维持多久由服务端决定。daemon 在 `cache/login.json` 记录登录时刻；任何请求第一次被重定向到网关或 CAS 登录页时，记一条"登录已失效：登录后约 Xh Ym"，`status` 也会显示。同一次实测中，持续每秒读取的会话至少维持了 8h09m。**外部浏览器/其他进程仍可使 token 失效**，请避免同时操作。Executor 串行：开抢时刻若正有别的提交在途，这次 fire 会排在它之后。另外时刻 T 以本机时钟为准，开抢前请确认 NTP 已同步。
 
 ## 本地 IPC 与数据
 

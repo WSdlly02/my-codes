@@ -218,6 +218,9 @@ impl Actor {
                 *session = Session::empty()?;
                 cache::clear_login_state()?;
                 *session = login::login(&username, &password).await?;
+                if let Err(e) = cache::save_login_time(now_ms()) {
+                    tracing::warn!("保存登录时间失败：{e:#}");
+                }
                 Ok(Response::LoggedIn)
             }
             Maintenance::Logout => {

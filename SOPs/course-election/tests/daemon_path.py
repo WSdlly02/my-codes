@@ -37,6 +37,12 @@ class Reply(http.server.BaseHTTPRequestHandler):
         if "defaultPage" in url.path:
             server.token += 1
             data = fixture.page(str(server.token)) + '<script>var electedIds={};electedIds["l105"]=true;</script>'
+        elif "queryStdCount" in url.path and server.login_lost:
+            self.send_response(302)
+            self.send_header("Location", "https://ng.shmtu.edu.cn/wengine-auth/login?id=170&path=/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         elif "queryStdCount" in url.path:
             count = 1 if server.full else 0
             data = "window.lessonId2Counts={" + ",".join(
@@ -87,6 +93,7 @@ def main():
         proxy.log, proxy.post_times, proxy.prewarms = [], [], 0
         proxy.full, proxy.delay, proxy.token = True, 0, 20260923100000
         proxy.post_status, proxy.post_reply = 200, "选课成功"
+        proxy.login_lost = False
         cwd = Path(directory)
         socket_path = cwd / "cache/runtime/daemon.sock"
         daemon_cmd = [str(ROOT / "target/debug/course-electiond"), "--data-dir", directory, "--poll", "1s"]
@@ -189,16 +196,25 @@ def main():
                 for args in (["daemon", "stop"], ["arm"], ["jobs"], ["prepare"], ["job", "pause", "1"], ["status", "--force"]):
                     assert subprocess.run([*cli, *args], capture_output=True).returncode != 0
 
-                # Logout cancels everything.
+                # A read redirected to the gateway login page is reported once, with the time.
                 e = watch(109)
+                proxy.login_lost = True
+                until(lambda: rpc({"command": "status"})["login_lost_at_ms"] is not None)
+                time.sleep(2.2)
+                lost = [m["message"] for m in rpc({"command": "logs"})["events"] if "登录已失效" in m["message"]]
+                assert len(lost) == 1, lost
+                proxy.login_lost = False
+
+                # Logout cancels everything and clears the login record.
                 maintain("logout")
                 until(lambda: ended(e, "已取消") and rpc({"command": "jobs"}) == [])
+                assert rpc({"command": "status"})["login_lost_at_ms"] is None
 
                 assert not proxy.errors, proxy.errors
                 daemon.terminate()
                 assert daemon.wait(timeout=10) == 0
                 assert not socket_path.exists()
-                print("PASS: lock, shared poller, cancel boundary, reads during POST, profile switch, drop, retries, unknown, timed fire, CLI, logout, cleanup")
+                print("PASS: lock, shared poller, cancel boundary, reads during POST, profile switch, drop, retries, unknown, timed fire, CLI, login loss, logout, cleanup")
             finally:
                 if daemon.poll() is None:
                     daemon.kill()

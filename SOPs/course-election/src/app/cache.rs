@@ -4,8 +4,8 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::app::support::{
-    channels_cache_path, cookie_file_path, counts_cache_path, ensure_cache_dir, mapping_cache_path,
-    selected_cache_path,
+    channels_cache_path, cookie_file_path, counts_cache_path, ensure_cache_dir, login_file_path,
+    mapping_cache_path, selected_cache_path,
 };
 use crate::model::{
     ChannelCache, LessonCountSnapshot, LessonMappingCache, SavedCookie, SavedCookies,
@@ -59,7 +59,17 @@ pub(crate) fn save_selected_snapshot(snapshot: &SelectedSnapshot) -> Result<()> 
 }
 
 pub(crate) fn clear_login_state() -> Result<()> {
-    remove_if_present(&cookie_file_path())
+    remove_if_present(&cookie_file_path())?;
+    remove_if_present(&login_file_path())
+}
+
+pub(crate) fn save_login_time(at_ms: i64) -> Result<()> {
+    save_json(&login_file_path(), &at_ms)
+}
+
+/// `None` when unknown, e.g. for cookies saved before login times were recorded.
+pub(crate) fn load_login_time() -> Option<i64> {
+    load_json(&login_file_path()).ok()
 }
 
 fn load_json<T>(path: &Path) -> Result<T>

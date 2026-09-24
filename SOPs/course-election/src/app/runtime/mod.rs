@@ -6,12 +6,12 @@ mod intent;
 use crate::{
     app::{
         cache,
-        http::CountReader,
+        http::{self, CountReader},
         parser,
         protocol::{
             Command, IntentView, LogEvent, Maintenance, Progress, Response, Spec, Status, Trigger,
         },
-        support::now_ms,
+        support::{format_age, now_ms},
     },
     model::LessonCount,
 };
@@ -70,8 +70,15 @@ impl Handle {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct Login {
+    at_ms: Option<i64>,
+    lost_at_ms: Option<i64>,
+}
+
 #[derive(Default)]
 struct State {
+    login: Login,
     next_id: u64,
     intents: BTreeMap<u64, Handle>,
     logs: VecDeque<LogEvent>,
@@ -99,7 +106,13 @@ impl Runtime {
             context,
             capacity: watch::channel(None).0,
             poll,
-            state: Mutex::default(),
+            state: Mutex::new(State {
+                login: Login {
+                    at_ms: cache::load_login_time(),
+                    lost_at_ms: None,
+                },
+                ..State::default()
+            }),
             shutdown: CancellationToken::new(),
             tasks: TaskTracker::new(),
         });
@@ -190,21 +203,62 @@ impl Runtime {
                 }
                 // Intents of a replaced context end by themselves once it is published.
                 let what = maintenance.to_string();
+                let login_changes =
+                    matches!(maintenance, Maintenance::Login { .. } | Maintenance::Logout);
+                let logged_in = matches!(maintenance, Maintenance::Login { .. });
                 let result = self.exec.maintain(maintenance).await;
+                if login_changes {
+                    // A failed login also leaves no usable session behind.
+                    self.state.lock().unwrap().login = Login {
+                        at_ms: (logged_in && result.is_ok()).then(now_ms),
+                        lost_at_ms: None,
+                    };
+                }
                 self.log(match &result {
                     Ok(_) => format!("{what}：完成"),
                     Err(e) => format!("{what}：失败，{e:#}"),
                 });
+                if let Err(e) = &result {
+                    self.note_error(e);
+                }
                 result
             }
         }
     }
 
+    /// Records the first sign that the login is gone, with how long it lasted.
+    fn note_error(&self, error: &anyhow::Error) {
+        if !http::login_lost(error) {
+            return;
+        }
+        let now = now_ms();
+        let at_ms = {
+            let mut state = self.state.lock().unwrap();
+            if state.login.lost_at_ms.is_some() {
+                return;
+            }
+            state.login.lost_at_ms = Some(now);
+            state.login.at_ms
+        };
+        self.log(match at_ms {
+            Some(at) => format!(
+                "登录已失效：登录后约 {} 发现被重定向到登录页",
+                format_age(now - at)
+            ),
+            None => "登录已失效：被重定向到登录页（登录时间未知）".into(),
+        });
+    }
+
     fn status(&self) -> Status {
-        let intents = self.state.lock().unwrap().intents.len();
+        let (intents, login) = {
+            let state = self.state.lock().unwrap();
+            (state.intents.len(), state.login)
+        };
         let context = self.context.borrow();
         let capacity = self.capacity.borrow();
         Status {
+            logged_in_at_ms: login.at_ms,
+            login_lost_at_ms: login.lost_at_ms,
             profile: context.profile.clone(),
             context_ready: context.reader.is_some(),
             stopping: self.shutdown.is_cancelled(),
@@ -322,7 +376,10 @@ impl Runtime {
                     let snapshot = parser::build_lesson_count_snapshot(&profile, counts.clone());
                     let _ = cache::save_count_snapshot(&profile, &snapshot);
                 }
-                Err(e) => tracing::warn!("名额读取失败：{e:#}"),
+                Err(e) => {
+                    tracing::warn!("名额读取失败：{e:#}");
+                    self.note_error(e);
+                }
             }
             self.capacity.send_replace(Some(Capacity {
                 profile,

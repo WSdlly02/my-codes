@@ -148,6 +148,9 @@ impl From<Maintenance> for Command {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Status {
+    pub logged_in_at_ms: Option<i64>,
+    /// First time a request was redirected to a login page after `logged_in_at_ms`.
+    pub login_lost_at_ms: Option<i64>,
     pub profile: Option<String>,
     pub context_ready: bool,
     pub stopping: bool,

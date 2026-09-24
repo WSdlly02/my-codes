@@ -14,9 +14,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::app::http::Session;
 use crate::app::support::{BASE_URL, DEFAULT_OCR_MODEL, DEFAULT_OLLAMA_URL};
 
-const CAS_HOST: &str = "sso.shmtu.edu.cn";
+pub(crate) const CAS_HOST: &str = "sso.shmtu.edu.cn";
 const JWXT_HOST: &str = "jwxt.shmtu.edu.cn";
-const GATEWAY_HOST: &str = "ng.shmtu.edu.cn";
+pub(crate) const GATEWAY_HOST: &str = "ng.shmtu.edu.cn";
 const MAX_REDIRECTS: usize = 10;
 const CAPTCHA_ATTEMPTS: usize = 3;
 

@@ -18,6 +18,15 @@ pub(crate) fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
 }
 
+/// `8h09m`, `12m`: coarse on purpose, for humans.
+pub(crate) fn format_age(ms: i64) -> String {
+    let minutes = ms.max(0) / 60_000;
+    match minutes / 60 {
+        0 => format!("{minutes}m"),
+        hours => format!("{hours}h{:02}m", minutes % 60),
+    }
+}
+
 pub(crate) fn now_fixed() -> DateTime<FixedOffset> {
     Shanghai
         .from_utc_datetime(&Utc::now().naive_utc())
@@ -91,6 +100,11 @@ pub(crate) fn cookie_file_path() -> PathBuf {
     Path::new(CACHE_DIR).join("cookies.json")
 }
 
+/// When the current login happened, as Unix milliseconds.
+pub(crate) fn login_file_path() -> PathBuf {
+    Path::new(CACHE_DIR).join("login.json")
+}
+
 pub(crate) fn channels_cache_path() -> PathBuf {
     Path::new(CACHE_DIR).join("channels.json")
 }
@@ -109,7 +123,14 @@ pub(crate) fn selected_cache_path(profile_id: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::semester_id_for_date;
+    use super::{format_age, semester_id_for_date};
+
+    #[test]
+    fn ages_are_hours_and_minutes() {
+        assert_eq!(format_age(0), "0m");
+        assert_eq!(format_age(59 * 60_000 + 59_999), "59m");
+        assert_eq!(format_age((8 * 60 + 9) * 60_000), "8h09m");
+    }
     use chrono::TimeZone;
     use chrono_tz::Asia::Shanghai;
 

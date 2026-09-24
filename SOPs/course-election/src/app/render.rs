@@ -2,7 +2,7 @@
 use super::{
     cache,
     protocol::{IntentView, LogEvent, Response, Status, Trigger},
-    support::now_ms,
+    support::{format_age, now_ms},
 };
 use crate::model::{ChannelEntry, LessonMappingCache, SelectedSnapshot};
 use chrono::{DateTime, FixedOffset, TimeZone};
@@ -101,7 +101,23 @@ fn render_status(s: &Status) -> String {
     if let Some(error) = &s.read_error {
         reads.push_str(&format!("；读取失败：{error}"));
     }
+    let login = match (s.logged_in_at_ms, s.login_lost_at_ms) {
+        (Some(at), None) => format!(
+            "{} 登录，已 {}",
+            clock(at, false),
+            format_age(now_ms() - at)
+        ),
+        (Some(at), Some(lost)) => format!(
+            "已失效：{} 登录，{} 发现被重定向到登录页（登录后约 {}）",
+            clock(at, false),
+            clock(lost, false),
+            format_age(lost - at)
+        ),
+        (None, Some(lost)) => format!("已失效：{} 发现被重定向到登录页", clock(lost, false)),
+        (None, None) => "未记录登录时间".into(),
+    };
     let mut rows = vec![
+        format!("{}{login}", pad("登录", 10)),
         format!("{}{context}", pad("profile", 10)),
         format!("{}{reads}", pad("名额读取", 10)),
         format!("{}{} 个运行中", pad("意图", 10), s.intents),
