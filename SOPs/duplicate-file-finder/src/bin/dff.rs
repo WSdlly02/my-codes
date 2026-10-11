@@ -196,9 +196,10 @@ fn group_by_size(files: Vec<FileInfo>) -> Vec<FileInfo> {
 
 fn group_by_hash(files: Vec<FileInfo>) -> HashMap<String, Vec<FileInfo>> {
     let mut hash_groups: HashMap<String, Vec<FileInfo>> = HashMap::new();
+    let mut buffer = vec![0u8; BUFFER_SIZE];
 
     for file in files {
-        match hash_file(&file.path) {
+        match hash_file(&file.path, &mut buffer) {
             Ok(hash) => {
                 hash_groups.entry(hash).or_default().push(file);
             }
@@ -209,12 +210,12 @@ fn group_by_hash(files: Vec<FileInfo>) -> HashMap<String, Vec<FileInfo>> {
     hash_groups
 }
 
-fn hash_file(path: &Path) -> io::Result<String> {
+fn hash_file(path: &Path, buffer: &mut [u8]) -> io::Result<String> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0u8; BUFFER_SIZE];
 
-    while let Ok(n) = file.read(&mut buffer) {
+    loop {
+        let n = file.read(buffer)?;
         if n == 0 {
             break;
         }
