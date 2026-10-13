@@ -63,9 +63,7 @@
           exposedPackages = {
             # Packages here will be exposed and used as libraries in other parts of the flake
             # Rust packages
-            duplicate-file-finder = rustPlatform.callPackage ./Nix/pkgs/duplicate-file-finder.nix { };
             epson-maintenance = rustPlatform.callPackage ./Nix/pkgs/epson-maintenance.nix { };
-            mihomo-updater = rustPlatform.callPackage ./Nix/pkgs/mihomo-updater.nix { };
 
             # Other packages
             ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
