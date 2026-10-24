@@ -1,0 +1,24 @@
+# 班轮运输教材配置：参数沿用 demo-for-liner-shipping.py。
+# API 参数直接透传；未填写的字段由服务端决定。
+model = "PaddleOCR-VL-1.6"
+
+[optionalPayload]
+# 包含 footnote、aside_text：会过滤脚注和旁注，请按教材需要调整。
+markdownIgnoreLabels = ["header", "header_image", "footer", "footer_image", "footnote", "aside_text"]
+useDocOrientationClassify = true
+useDocUnwarping = true
+useLayoutDetection = true
+useChartRecognition = true
+useSealRecognition = false
+useOcrForImageBlock = true
+mergeTables = true
+relevelTitles = true
+layoutShapeMode = "auto"
+promptLabel = "ocr"
+repetitionPenalty = 1
+temperature = 0
+topP = 1
+minPixels = 147384
+maxPixels = 2822400
+layoutNms = true
+restructurePages = true

@@ -9,7 +9,8 @@ use localllm_notebooklm::{
     write_error_log,
 };
 use reqwest::{Client, multipart};
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -17,13 +18,54 @@ use std::{
 use tokio::{fs, sync::Semaphore, time::Duration};
 
 const JOB_URL: &str = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs";
-const MODEL: &str = "PaddleOCR-VL-1.6";
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct OcrConfig {
+    model: String,
+    #[serde(rename = "optionalPayload")]
+    optional_payload: Map<String, Value>,
+}
+
+impl OcrConfig {
+    fn parse(source: &str) -> Result<Self> {
+        let config: Self = toml::from_str(source).context("invalid OCR TOML config")?;
+        if config.model.trim().is_empty() {
+            return Err(anyhow!("OCR model must not be empty"));
+        }
+        Ok(config)
+    }
+}
+
+// Compare parsed request values, so comments and key ordering do not affect reuse.
+async fn check_cached_config(output_dir: &Path, config: &OcrConfig) -> Result<()> {
+    if !is_nonempty_file(&output_dir.join("merged.md")).await {
+        return Ok(());
+    }
+    let path = output_dir.join("ocr-config.json");
+    let guidance = format!(
+        "cannot reuse OCR cache {}; use a new --cache-dir or manifest id",
+        output_dir.display()
+    );
+    let source = fs::read(&path)
+        .await
+        .with_context(|| format!("{guidance}: missing or unreadable {}", path.display()))?;
+    let saved: OcrConfig = serde_json::from_slice(&source)
+        .with_context(|| format!("{guidance}: invalid config snapshot"))?;
+    if saved != *config {
+        return Err(anyhow!("{guidance}: OCR configuration changed"));
+    }
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Arc::new(Args::parse_and_validate()?);
+    let source = fs::read_to_string(&args.config)
+        .await
+        .with_context(|| format!("failed to read config {}", args.config.display()))?;
+    let config = Arc::new(OcrConfig::parse(&source)?);
     dotenv().ok();
     let token = Arc::new(std::env::var("PP_API_KEY").context("PP_API_KEY should be set")?);
-    let args = Arc::new(Args::parse_and_validate()?);
     let client = Client::new();
 
     let rows = read_manifest(&args.manifest).await?;
@@ -33,6 +75,11 @@ async fn main() -> Result<()> {
         args.manifest.display()
     );
 
+    // Check the entire batch before uploading any PDFs.
+    for row in &rows {
+        check_cached_config(&args.cache_dir.join(&row.id), &config).await?;
+    }
+
     let semaphore = Arc::new(Semaphore::new(args.concurrency));
     let mut handles = Vec::with_capacity(rows.len());
 
@@ -41,9 +88,10 @@ async fn main() -> Result<()> {
         let client = client.clone();
         let token = token.clone();
         let args = args.clone();
+        let config = config.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit;
-            process_with_retry(client, token, args, row).await
+            process_with_retry(client, token, args, config, row).await
         }));
     }
 
@@ -73,6 +121,10 @@ async fn main() -> Result<()> {
     about = "Batch PaddleOCR PDF files from a minimal JSONL manifest"
 )]
 struct Args {
+    /// Textbook OCR settings (TOML).
+    #[arg(long, value_name = "PATH")]
+    config: PathBuf,
+
     #[arg(long, value_name = "PATH")]
     manifest: PathBuf,
 
@@ -141,12 +193,13 @@ async fn process_with_retry(
     client: Client,
     token: Arc<String>,
     args: Arc<Args>,
+    config: Arc<OcrConfig>,
     row: PdfManifestRow,
 ) -> Result<TaskOutcome> {
     let output_dir = args.cache_dir.join(&row.id);
     let final_md = output_dir.join("merged.md");
 
-    // Resume is filesystem-based: a non-empty final markdown is the only done state.
+    // Configuration compatibility was checked for the entire batch before submission.
     if is_nonempty_file(&final_md).await {
         println!("[skip] {} {}", row.id, row.pdf_name);
         return Ok(TaskOutcome::Skipped);
@@ -162,7 +215,7 @@ async fn process_with_retry(
             println!("[start] {} {}", row.id, row.pdf_name);
         }
 
-        match process_once(&client, &token, &args, &row, &output_dir).await {
+        match process_once(&client, &token, &args, &config, &row, &output_dir).await {
             Ok(()) => {
                 println!("[done] {} {}", row.id, row.pdf_name);
                 return Ok(TaskOutcome::Done);
@@ -182,6 +235,7 @@ async fn process_once(
     client: &Client,
     token: &str,
     args: &Args,
+    config: &OcrConfig,
     row: &PdfManifestRow,
     output_dir: &Path,
 ) -> Result<()> {
@@ -192,7 +246,12 @@ async fn process_once(
     fs::create_dir_all(tmp_dir.join("pages")).await?;
     fs::create_dir_all(tmp_dir.join("images")).await?;
 
-    let job_id = submit_job(client, token, &row.pdf_path).await?;
+    fs::write(
+        tmp_dir.join("ocr-config.json"),
+        serde_json::to_vec_pretty(config)?,
+    )
+    .await?;
+    let job_id = submit_job(client, token, &row.pdf_path, config).await?;
     println!("[job] {} {} -> {}", row.id, row.pdf_name, job_id);
 
     let jsonl_url = poll_job(client, token, args.poll_interval(), &job_id, row).await?;
@@ -208,14 +267,19 @@ async fn process_once(
         .context("failed to read PaddleOCR result jsonl response")?;
 
     fs::write(tmp_dir.join("result.jsonl"), &jsonl).await?;
-    let merged = write_pages_and_images(client, &tmp_dir, row, &jsonl).await?;
+    let merged = write_pages_and_images(client, &tmp_dir, row, &jsonl, &config.model).await?;
     fs::write(tmp_dir.join("merged.md"), merged).await?;
 
     commit_tmp(output_dir).await?;
     Ok(())
 }
 
-async fn submit_job(client: &Client, token: &str, pdf_path: &Path) -> Result<String> {
+async fn submit_job(
+    client: &Client,
+    token: &str,
+    pdf_path: &Path,
+    config: &OcrConfig,
+) -> Result<String> {
     let file_bytes = fs::read(pdf_path)
         .await
         .with_context(|| format!("failed to read PDF {}", pdf_path.display()))?;
@@ -224,17 +288,15 @@ async fn submit_job(client: &Client, token: &str, pdf_path: &Path) -> Result<Str
         .and_then(|name| name.to_str())
         .unwrap_or("document.pdf")
         .to_string();
-    let optional_payload = json!({
-        "useDocOrientationClassify": false,
-        "useDocUnwarping": false,
-        "useChartRecognition": true
-    });
     let file_part = multipart::Part::bytes(file_bytes)
         .file_name(file_name)
         .mime_str("application/pdf")?;
     let form = multipart::Form::new()
-        .text("model", MODEL)
-        .text("optionalPayload", optional_payload.to_string())
+        .text("model", config.model.clone())
+        .text(
+            "optionalPayload",
+            serde_json::to_string(&config.optional_payload)?,
+        )
         .part("file", file_part);
 
     let response: ApiEnvelope<SubmitJobData> = client
@@ -322,6 +384,7 @@ async fn write_pages_and_images(
     tmp_dir: &Path,
     row: &PdfManifestRow,
     jsonl: &str,
+    model: &str,
 ) -> Result<String> {
     let mut page_no = 1usize;
     let mut merged = String::new();
@@ -330,7 +393,7 @@ async fn write_pages_and_images(
     merged.push_str(&format!("id: {}\n", row.id));
     merged.push_str(&format!("pdf_name: {}\n", row.pdf_name));
     merged.push_str(&format!("pdf_path: {}\n", row.pdf_path.display()));
-    merged.push_str(&format!("ocr_provider: {}\n", MODEL));
+    merged.push_str(&format!("ocr_provider: {}\n", model));
     merged.push_str("---\n\n");
     merged.push_str(&format!("# {}\n\n", row.pdf_name));
 
@@ -486,8 +549,75 @@ async fn commit_tmp(output_dir: &Path) -> Result<()> {
         output_dir.join("result.jsonl"),
     )
     .await?;
+    remove_path_if_exists(&output_dir.join("ocr-config.json")).await?;
+    fs::rename(
+        tmp_dir.join("ocr-config.json"),
+        output_dir.join("ocr-config.json"),
+    )
+    .await?;
     fs::rename(tmp_dir.join("merged.md"), output_dir.join("merged.md")).await?;
     remove_path_if_exists(&output_dir.join("error.log")).await?;
     remove_path_if_exists(&tmp_dir).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn textbook_config_preserves_request_values() {
+        let config = OcrConfig::parse(include_str!("../../configs/liner-shipping.toml")).unwrap();
+        assert_eq!(config.model, "PaddleOCR-VL-1.6");
+        assert_eq!(config.optional_payload.len(), 18);
+        assert_eq!(config.optional_payload["useDocUnwarping"], true);
+        assert_eq!(config.optional_payload["minPixels"], 147384);
+        let encoded = serde_json::to_vec(&config).unwrap();
+        let decoded: OcrConfig = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(config, decoded);
+    }
+
+    #[test]
+    fn config_rejects_missing_or_misspelled_top_level_fields() {
+        for source in [
+            "model = 'test'",
+            "model = ''\n[optionalPayload]",
+            "model = 'test'\noptionalPaylod = {}",
+            "model = 'test'\nunknown = true\n[optionalPayload]",
+        ] {
+            assert!(OcrConfig::parse(source).is_err(), "accepted {source}");
+        }
+    }
+
+    #[tokio::test]
+    async fn cache_requires_matching_snapshot_only_for_completed_results() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "batch-paddle-ocr-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).await?;
+        let result = async {
+            let config = OcrConfig::parse("model = 'test'\n[optionalPayload]\nflag = true")?;
+            check_cached_config(&dir, &config).await?;
+            fs::write(dir.join("merged.md"), "complete").await?;
+            assert!(check_cached_config(&dir, &config).await.is_err());
+            fs::write(dir.join("ocr-config.json"), serde_json::to_vec(&config)?).await?;
+            let equivalent =
+                OcrConfig::parse("# comment\nmodel='test'\n[optionalPayload]\nflag=true")?;
+            check_cached_config(&dir, &equivalent).await?;
+            let changed = OcrConfig::parse("model='test'\n[optionalPayload]\nflag=false")?;
+            assert!(check_cached_config(&dir, &changed).await.is_err());
+            let model_changed = OcrConfig::parse("model='other'\n[optionalPayload]\nflag=true")?;
+            assert!(check_cached_config(&dir, &model_changed).await.is_err());
+            fs::write(dir.join("ocr-config.json"), "broken").await?;
+            assert!(check_cached_config(&dir, &config).await.is_err());
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        fs::remove_dir_all(&dir).await?;
+        result
+    }
 }

@@ -35,6 +35,11 @@ struct FixReport {
     stripped_markdown_headings_in_math: usize,
     escaped_percent_signs: usize,
     trimmed_inline_dollar_math: usize,
+    html_tables_converted: usize,
+    html_tables_failed: usize,
+    colspans_expanded: usize,
+    rowspans_seen: usize,
+    table_math_cells_wrapped: usize,
     closed_unterminated_display_blocks: usize,
 }
 
@@ -80,7 +85,7 @@ fn main() -> Result<()> {
     println!("Read:  {}", input.display());
     println!("Wrote: {}", output.display());
     println!(
-        "Math fixes: bracket_delims={}, latex_delims={}, dollar_blocks={}, one_line_blocks={}, blank_math_lines_removed={}, equals_rules_fixed={}, headings_stripped_in_math={}, percents_escaped={}, inline_dollar_spaces_trimmed={}, unterminated_blocks_closed={}",
+        "Fixes: bracket_delims={}, latex_delims={}, dollar_blocks={}, one_line_blocks={}, blank_math_lines_removed={}, equals_rules_fixed={}, headings_stripped_in_math={}, percents_escaped={}, inline_dollar_spaces_trimmed={}, html_tables_converted={}, html_tables_failed={}, colspans_expanded={}, rowspans_seen={}, table_math_cells_wrapped={}, unterminated_blocks_closed={}",
         report.bracket_display_delimiters,
         report.latex_display_delimiters,
         report.dollar_display_blocks,
@@ -90,6 +95,11 @@ fn main() -> Result<()> {
         report.stripped_markdown_headings_in_math,
         report.escaped_percent_signs,
         report.trimmed_inline_dollar_math,
+        report.html_tables_converted,
+        report.html_tables_failed,
+        report.colspans_expanded,
+        report.rowspans_seen,
+        report.table_math_cells_wrapped,
         report.closed_unterminated_display_blocks,
     );
 
@@ -119,7 +129,9 @@ fn fix_markdown(source: &str) -> (String, FixReport) {
     let mut report = FixReport::default();
     let mut output = Vec::<String>::new();
     let mut block = Vec::<String>::new();
+    let mut table_block = Vec::<String>::new();
     let mut in_display_math = false;
+    let mut in_html_table = false;
     let mut source_had_trailing_newline = false;
 
     for line in source.split_inclusive('\n') {
@@ -128,6 +140,16 @@ fn fix_markdown(source: &str) -> (String, FixReport) {
         let line = line.strip_suffix('\r').unwrap_or(line);
         let trimmed = line.trim();
 
+        if in_html_table {
+            table_block.push(line.to_string());
+            if contains_ci(line, "</table>") {
+                push_html_table_or_original(&mut output, &table_block, &mut report);
+                table_block.clear();
+                in_html_table = false;
+            }
+            continue;
+        }
+
         if in_display_math {
             if is_display_close(trimmed) {
                 push_math_block(&mut output, &block, &mut report);
@@ -135,6 +157,17 @@ fn fix_markdown(source: &str) -> (String, FixReport) {
                 in_display_math = false;
             } else {
                 block.push(line.to_string());
+            }
+            continue;
+        }
+
+        if contains_ci(line, "<table") {
+            table_block.push(line.to_string());
+            if contains_ci(line, "</table>") {
+                push_html_table_or_original(&mut output, &table_block, &mut report);
+                table_block.clear();
+            } else {
+                in_html_table = true;
             }
             continue;
         }
@@ -172,6 +205,10 @@ fn fix_markdown(source: &str) -> (String, FixReport) {
     if in_display_math {
         report.closed_unterminated_display_blocks += 1;
         push_math_block(&mut output, &block, &mut report);
+    }
+    if in_html_table {
+        report.html_tables_failed += 1;
+        output.extend(table_block);
     }
 
     let mut fixed = output.join("\n");
@@ -310,6 +347,286 @@ fn escape_unescaped_percent(line: &str) -> (String, usize) {
     (escaped, count)
 }
 
+fn push_html_table_or_original(
+    output: &mut Vec<String>,
+    table_lines: &[String],
+    report: &mut FixReport,
+) {
+    let html = table_lines.join("\n");
+    match html_table_to_markdown(&html, report) {
+        Some(lines) => {
+            report.html_tables_converted += 1;
+            output.extend(lines);
+        }
+        None => {
+            report.html_tables_failed += 1;
+            output.extend(table_lines.iter().cloned());
+        }
+    }
+}
+
+fn html_table_to_markdown(html: &str, report: &mut FixReport) -> Option<Vec<String>> {
+    let mut rows = parse_html_rows(html, report);
+    if rows.is_empty() {
+        return None;
+    }
+
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if width == 0 {
+        return None;
+    }
+
+    for row in &mut rows {
+        while row.len() < width {
+            row.push(String::new());
+        }
+    }
+
+    let mut markdown = Vec::with_capacity(rows.len() + 1);
+    markdown.push(markdown_table_row(&rows[0]));
+    markdown.push(markdown_separator_row(width));
+    for row in rows.iter().skip(1) {
+        markdown.push(markdown_table_row(row));
+    }
+    Some(markdown)
+}
+
+fn parse_html_rows(html: &str, report: &mut FixReport) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(row_start_rel) = find_ci_from(html, "<tr", cursor) {
+        let row_start = row_start_rel;
+        let Some(open_end_rel) = html[row_start..].find('>') else {
+            break;
+        };
+        let content_start = row_start + open_end_rel + 1;
+        let Some(row_close) = find_ci_from(html, "</tr>", content_start) else {
+            break;
+        };
+
+        let row_html = &html[content_start..row_close];
+        let row = parse_html_cells(row_html, report);
+        if !row.is_empty() {
+            rows.push(row);
+        }
+        cursor = row_close + "</tr>".len();
+    }
+
+    rows
+}
+
+fn parse_html_cells(row_html: &str, report: &mut FixReport) -> Vec<String> {
+    let mut cells = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some((cell_start, tag_name)) = find_next_cell_open(row_html, cursor) {
+        let Some(open_end_rel) = row_html[cell_start..].find('>') else {
+            break;
+        };
+        let open_end = cell_start + open_end_rel;
+        let open_tag = &row_html[cell_start..=open_end];
+        let content_start = open_end + 1;
+        let close_tag = if tag_name == "td" { "</td>" } else { "</th>" };
+        let Some(cell_close) = find_ci_from(row_html, close_tag, content_start) else {
+            break;
+        };
+
+        let colspan = attr_usize(open_tag, "colspan").unwrap_or(1).max(1);
+        if colspan > 1 {
+            report.colspans_expanded += colspan - 1;
+        }
+        if attr_usize(open_tag, "rowspan").unwrap_or(1) > 1 {
+            report.rowspans_seen += 1;
+        }
+
+        let inner = &row_html[content_start..cell_close];
+        cells.push(clean_html_cell(inner, report));
+        for _ in 1..colspan {
+            cells.push(String::new());
+        }
+        cursor = cell_close + close_tag.len();
+    }
+
+    cells
+}
+
+fn find_next_cell_open(html: &str, cursor: usize) -> Option<(usize, &'static str)> {
+    let td = find_ci_from(html, "<td", cursor);
+    let th = find_ci_from(html, "<th", cursor);
+    match (td, th) {
+        (Some(td), Some(th)) if td <= th => Some((td, "td")),
+        (Some(_td), Some(th)) => Some((th, "th")),
+        (Some(td), None) => Some((td, "td")),
+        (None, Some(th)) => Some((th, "th")),
+        (None, None) => None,
+    }
+}
+
+fn attr_usize(tag: &str, attr_name: &str) -> Option<usize> {
+    attr_value(tag, attr_name)?.trim().parse().ok()
+}
+
+fn attr_value<'a>(tag: &'a str, attr_name: &str) -> Option<&'a str> {
+    let mut cursor = 0usize;
+    while let Some(name_pos) = find_ci_from(tag, attr_name, cursor) {
+        let after_name = name_pos + attr_name.len();
+        let rest = tag[after_name..].trim_start();
+        if !rest.starts_with('=') {
+            cursor = after_name;
+            continue;
+        }
+        let rest = rest[1..].trim_start();
+        if let Some(stripped) = rest.strip_prefix('"') {
+            let end = stripped.find('"')?;
+            return Some(&stripped[..end]);
+        }
+        if let Some(stripped) = rest.strip_prefix('\'') {
+            let end = stripped.find('\'')?;
+            return Some(&stripped[..end]);
+        }
+        let end = rest
+            .find(|ch: char| ch.is_whitespace() || ch == '>')
+            .unwrap_or(rest.len());
+        return Some(&rest[..end]);
+    }
+    None
+}
+
+fn clean_html_cell(html: &str, report: &mut FixReport) -> String {
+    let with_breaks = replace_line_breaks_and_images(html);
+    let text = strip_html_tags(&with_breaks);
+    let decoded = decode_basic_html_entities(&text);
+    let normalized_space = decoded
+        .replace("\r\n", "<br>")
+        .replace('\n', "<br>")
+        .replace("\\n", "<br>");
+    let (normalized_math, count) = normalize_inline_dollar_math(normalized_space.trim());
+    report.trimmed_inline_dollar_math += count;
+    let wrapped = wrap_math_like_table_cell(&normalized_math, report);
+    escape_markdown_table_cell(&wrapped)
+}
+
+fn wrap_math_like_table_cell(cell: &str, report: &mut FixReport) -> String {
+    let trimmed = cell.trim();
+    if is_math_like_table_token(trimmed) {
+        report.table_math_cells_wrapped += 1;
+        format!("${trimmed}$")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn is_math_like_table_token(value: &str) -> bool {
+    if value.is_empty()
+        || value.contains('$')
+        || value.contains("<br>")
+        || value.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+
+    if value.starts_with('\\') {
+        return value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '\\' | '_' | '^' | '{' | '}'));
+    }
+
+    if !(value.contains('_') || value.contains('^')) {
+        return false;
+    }
+
+    value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '^' | '{' | '}'))
+}
+
+fn replace_line_breaks_and_images(html: &str) -> String {
+    let mut output = String::with_capacity(html.len());
+    let mut cursor = 0usize;
+
+    while let Some(tag_start) = html[cursor..].find('<') {
+        let tag_start = cursor + tag_start;
+        output.push_str(&html[cursor..tag_start]);
+        let Some(tag_end_rel) = html[tag_start..].find('>') else {
+            output.push_str(&html[tag_start..]);
+            return output;
+        };
+        let tag_end = tag_start + tag_end_rel + 1;
+        let tag = &html[tag_start..tag_end];
+        let lower = tag.to_ascii_lowercase();
+
+        if lower.starts_with("<br") {
+            output.push_str("<br>");
+        } else if lower.starts_with("<img") {
+            if let Some(src) = attr_value(tag, "src") {
+                output.push_str("![](");
+                output.push_str(src);
+                output.push(')');
+            }
+        } else {
+            output.push_str(tag);
+        }
+        cursor = tag_end;
+    }
+
+    output.push_str(&html[cursor..]);
+    output
+}
+
+fn strip_html_tags(html: &str) -> String {
+    let mut output = String::with_capacity(html.len());
+    let mut in_tag = false;
+
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag => output.push(ch),
+            _ => {}
+        }
+    }
+
+    output
+}
+
+fn decode_basic_html_entities(text: &str) -> String {
+    text.replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
+fn escape_markdown_table_cell(cell: &str) -> String {
+    cell.replace('|', r"\|").trim().to_string()
+}
+
+fn markdown_table_row(cells: &[String]) -> String {
+    format!("| {} |", cells.join(" | "))
+}
+
+fn markdown_separator_row(width: usize) -> String {
+    format!("|{}|", vec![" --- "; width].join("|"))
+}
+
+fn contains_ci(haystack: &str, needle: &str) -> bool {
+    find_ci_from(haystack, needle, 0).is_some()
+}
+
+fn find_ci_from(haystack: &str, needle: &str, start: usize) -> Option<usize> {
+    if needle.is_empty() || start >= haystack.len() {
+        return None;
+    }
+
+    let haystack_lower = haystack[start..].to_ascii_lowercase();
+    let needle_lower = needle.to_ascii_lowercase();
+    haystack_lower
+        .find(&needle_lower)
+        .map(|index| start + index)
+}
+
 fn normalize_inline_dollar_math(line: &str) -> (String, usize) {
     let mut output = String::with_capacity(line.len());
     let mut cursor = 0usize;
@@ -407,5 +724,41 @@ mod tests {
         let input = "$$ x+1 $$\n";
         let (fixed, _) = fix_markdown(input);
         assert_eq!(fixed, "$$\nx+1\n$$\n");
+    }
+
+    #[test]
+    fn converts_inline_html_table_to_markdown_table() {
+        let input =
+            "<table><tr><td>A</td><td>$ B_{1} $</td></tr><tr><td>1</td><td>2</td></tr></table>\n";
+        let (fixed, report) = fix_markdown(input);
+        assert_eq!(report.html_tables_converted, 1);
+        assert_eq!(fixed, "| A | $B_{1}$ |\n| --- | --- |\n| 1 | 2 |\n");
+    }
+
+    #[test]
+    fn expands_colspan_as_empty_markdown_cells() {
+        let input = "<table><tr><td colspan=\"2\">A</td><td>B</td></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>\n";
+        let (fixed, report) = fix_markdown(input);
+        assert_eq!(report.colspans_expanded, 1);
+        assert_eq!(fixed, "| A |  | B |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n");
+    }
+
+    #[test]
+    fn keeps_unclosed_table_as_original() {
+        let input = "<table><tr><td>A</td></tr>\n";
+        let (fixed, report) = fix_markdown(input);
+        assert_eq!(report.html_tables_failed, 1);
+        assert_eq!(fixed, input);
+    }
+
+    #[test]
+    fn wraps_bare_math_tokens_inside_table_cells() {
+        let input = "<table><tr><td>C_B</td><td>\\sigma_j</td><td>普通文本</td></tr></table>\n";
+        let (fixed, report) = fix_markdown(input);
+        assert_eq!(report.table_math_cells_wrapped, 2);
+        assert_eq!(
+            fixed,
+            "| $C_B$ | $\\sigma_j$ | 普通文本 |\n| --- | --- | --- |\n"
+        );
     }
 }
