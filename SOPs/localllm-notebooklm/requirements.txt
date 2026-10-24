@@ -1,3 +1,16 @@
 python-dotenv
 openai
 requests
+pypdf
+pypandoc_binary
+reportlab
+pymupdf
+
+python-pptx
+python-docx
+pdfplumber
+pymupdf
+pytest
+pytest-mock
+Pillow
+reportlab

@@ -1,0 +1,12 @@
+# Local archives and generated files
+/archive/
+/.venv/
+/target/
+__pycache__/
+*.pyc
+/.env
+/.env.*
+!/.env.example
+/班轮运输理论与实务
+/多式联运组织与管理
+/船舶贸易
