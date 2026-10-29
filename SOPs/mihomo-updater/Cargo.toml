@@ -14,7 +14,7 @@ path = "src/bin/updater.rs"
 [dependencies]
 anyhow = "1"
 axum = "0.8"
-blake3 = "1.8.6"
+blake3 = "1.8.7"
 futures = "0.3"
 regex = "1"
 reqwest = { version = "0.13" }
