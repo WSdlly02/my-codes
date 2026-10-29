@@ -21,10 +21,15 @@ pub struct ResolverConfig {
 pub struct VpsConfig {
     pub(super) groups: Box<[String]>,
     pub(super) direct_rule: bool,
+    pub(super) rules: Box<[String]>,
     pub(super) proxy: Map<String, Value>,
 }
 
 impl VpsConfig {
+    pub fn rules(&self) -> &[String] {
+        &self.rules
+    }
+
     pub fn groups(&self) -> &[String] {
         &self.groups
     }
@@ -72,6 +77,8 @@ pub(super) struct VpsToml {
     #[serde(rename = "direct-rule")]
     pub direct_rule: bool,
     pub groups: Box<[String]>,
+    #[serde(default)]
+    pub rules: Box<[String]>,
     #[serde(rename = "proxy-json")]
     pub proxy_json: String,
 }

@@ -52,6 +52,7 @@ impl ResolverConfig {
     }
 
     /// Returns local rules that must be evaluated before ACL4SSR rules.
+    /// TOML rules follow built-in/direct rules, in filename and VPS declaration order.
     ///
     /// ["IP-CIDR,1.1.1.0/24,DIRECT,no-resolve", "IP-CIDR,8.8.8.8/32,DIRECT,no-resolve"]
     pub fn custom_rules(&self) -> Box<[String]> {
@@ -63,6 +64,11 @@ impl ResolverConfig {
                     .iter()
                     .filter_map(VpsConfig::direct_rule_server_ip)
                     .map(|ip| format!("IP-CIDR,{ip}/32,DIRECT,no-resolve")),
+            )
+            .chain(
+                self.vps_configs
+                    .iter()
+                    .flat_map(|vps| vps.rules().iter().cloned()),
             )
             .collect()
     }
@@ -157,6 +163,7 @@ fn load_vps_configs(dir: &Path) -> Result<Box<[VpsConfig]>> {
             configs.push(VpsConfig {
                 groups: raw.groups,
                 direct_rule: raw.direct_rule,
+                rules: raw.rules,
                 proxy,
             });
         }
@@ -279,6 +286,7 @@ mod tests {
         assert_eq!(vps_configs[0].proxy()["server"], "203.0.113.10");
         assert_eq!(vps_configs[0].groups(), ["日本", "自动", "手动"]);
         assert_eq!(vps_configs[0].direct_rule_server_ip(), Some("203.0.113.10"));
+        assert!(vps_configs[0].rules().is_empty());
 
         let config = ResolverConfig {
             airport_url: String::new(),
@@ -300,6 +308,60 @@ mod tests {
         let group_map = config.auto_group_map();
         assert_eq!(group_map["日本"].len(), 1);
         assert_eq!(group_map["日本"][0], "JP ByteVirt VPS");
+    }
+
+    #[test]
+    fn custom_rules_follow_file_and_declaration_order_and_skip_disabled_nodes() {
+        let directory = tempfile::tempdir().unwrap();
+        let entry = |id: &str, enabled: bool, rules: &str| {
+            format!(
+                r#"
+[[vps]]
+id = "{id}"
+enabled = {enabled}
+direct-rule = false
+groups = ["手动"]
+rules = [{rules}]
+proxy-json = '{{"name":"{id}"}}'
+"#
+            )
+        };
+        // Create files out of order to verify that loading uses filename order.
+        fs::write(
+            directory.path().join("20-last.toml"),
+            format!(
+                "version = 2\n{}",
+                entry("last", true, r#""DOMAIN,last.example,DIRECT""#)
+            ),
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("10-first.toml"),
+            format!("version = 2\n{}{}{}",
+                entry("first", true, r#""DOMAIN,www.clarksons.net.cn,atrust-rs", "DOMAIN,www.clarksons.net,atrust-rs""#),
+                entry("disabled", false, r#""DOMAIN,disabled.example,DIRECT""#),
+                entry("second", true, r#""DOMAIN,second.example,DIRECT""#)),
+        ).unwrap();
+        let config = ResolverConfig {
+            airport_url: String::new(),
+            origin_config_path: String::new(),
+            access_token: String::new(),
+            port: 0,
+            cache_dir: PathBuf::new(),
+            acl4ssr_config_path: PathBuf::new(),
+            vps_configs: load_vps_configs(directory.path()).unwrap(),
+        };
+        let expected: Vec<String> = BASE_CUSTOM_RULES
+            .into_iter()
+            .chain([
+                "DOMAIN,www.clarksons.net.cn,atrust-rs",
+                "DOMAIN,www.clarksons.net,atrust-rs",
+                "DOMAIN,second.example,DIRECT",
+                "DOMAIN,last.example,DIRECT",
+            ])
+            .map(str::to_string)
+            .collect();
+        assert_eq!(config.custom_rules().as_ref(), expected.as_slice());
     }
 
     #[test]
