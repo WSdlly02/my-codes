@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use crate::app::cache::{
     load_count_snapshot, save_channel_cache, save_cookies, save_count_snapshot, save_mapping_cache,
 };
-use crate::app::login::{CAS_HOST, GATEWAY_HOST};
+use crate::app::login::CAS_HOST;
 use crate::app::parser::{
     build_lesson_count_snapshot, build_lesson_mapping_cache, parse_channels, parse_count_payload,
     parse_elec_session_time, parse_elected_ids, parse_lesson_payload, parse_unique_std_id,
@@ -628,7 +628,7 @@ async fn fetch_class_schedule_table_html(
     response.text().await.context("读取课表详情失败")
 }
 
-/// A request was redirected to the gateway or CAS login page: the login is gone.
+/// A request was redirected to the CAS login page: the login is gone.
 #[derive(Debug)]
 pub(crate) struct LoginLost;
 
@@ -658,7 +658,7 @@ fn reject_redirect(response: &Response, operation: &str) -> Result<()> {
 fn redirect_error(operation: &str, location: Option<&str>) -> anyhow::Error {
     let to_login = location
         .and_then(|location| Url::parse(location).ok())
-        .is_some_and(|url| matches!(url.host_str(), Some(GATEWAY_HOST | CAS_HOST)));
+        .is_some_and(|url| url.host_str() == Some(CAS_HOST));
     if to_login {
         anyhow::Error::new(LoginLost).context(format!("{operation}失败"))
     } else {
@@ -757,9 +757,7 @@ mod tests {
 
     #[test]
     fn only_redirects_to_a_login_page_mean_the_login_is_lost() {
-        let gateway = "https://ng.shmtu.edu.cn/wengine-auth/login?id=170&path=/";
         let cas = "https://sso.shmtu.edu.cn/cas/login?service=x";
-        assert!(login_lost(&redirect_error("名额查询", Some(gateway))));
         assert!(login_lost(&redirect_error("选课提交", Some(cas))));
         assert!(!login_lost(&redirect_error(
             "名额查询",

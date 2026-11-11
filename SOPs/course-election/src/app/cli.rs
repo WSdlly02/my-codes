@@ -37,11 +37,9 @@ enum Action {
     Status,
     /// 登录（CAS 与验证码识别由 daemon 完成）；完成后全部意图结束
     Login {
-        /// 学号
-        username: String,
-        /// 从标准输入读取一行作为密码，而不是交互式隐藏输入
-        #[arg(long)]
-        password_stdin: bool,
+        /// 凭据文件（相对于调用 CLI 的目录），包含 USERNAME、PASSWORD、TOTP_BASE32 和 DEEPSEEK_API_KEY
+        #[arg(long, default_value = ".env")]
+        credentials: PathBuf,
     },
     /// 退出登录并清除 Cookie；全部意图结束
     Logout,
@@ -412,23 +410,16 @@ async fn schedule(semester: Option<String>, output: Option<PathBuf>, json: bool)
 }
 
 pub(crate) async fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    if let Action::Login { credentials } = &mut cli.command {
+        *credentials = std::path::absolute(&*credentials)?;
+    }
     std::env::set_current_dir(&cli.data_dir)?;
     let json = cli.json;
     let command = match cli.command {
         Action::Status => Command::Status,
-        Action::Login {
-            username,
-            password_stdin,
-        } => {
-            let password = if password_stdin {
-                let mut line = String::new();
-                std::io::stdin().read_line(&mut line)?;
-                line.trim_end_matches(['\r', '\n']).to_owned()
-            } else {
-                rpassword::prompt_password("密码：")?
-            };
-            Maintenance::Login { username, password }.into()
+        Action::Login { credentials } => {
+            Maintenance::Login(super::login::Credentials::read(&credentials)?).into()
         }
         Action::Logout => Maintenance::Logout.into(),
         Action::Profile(ProfileAction::List { sync: true }) => Maintenance::SyncProfiles.into(),

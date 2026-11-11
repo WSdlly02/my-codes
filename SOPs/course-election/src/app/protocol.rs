@@ -106,10 +106,7 @@ pub(crate) enum Command {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(crate) enum Maintenance {
-    Login {
-        username: String,
-        password: String,
-    },
+    Login(super::login::Credentials),
     Logout,
     /// Fetches the list of election rounds (profiles) into the cache.
     SyncProfiles,
@@ -129,7 +126,7 @@ pub(crate) enum Maintenance {
 impl std::fmt::Display for Maintenance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Maintenance::Login { username, .. } => write!(f, "登录 {username}"),
+            Maintenance::Login(credentials) => write!(f, "登录 {}", credentials.username),
             Maintenance::Logout => f.write_str("退出登录"),
             Maintenance::SyncProfiles => f.write_str("同步轮次列表"),
             Maintenance::UseProfile { id } => write!(f, "进入 profile {id}"),

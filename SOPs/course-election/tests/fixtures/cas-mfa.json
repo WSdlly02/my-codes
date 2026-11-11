@@ -1,0 +1,50 @@
+{
+  "source": "2026-11-11 live CAS form structures, projected with synthetic execution and device identifiers",
+  "pages": {
+    "password": "<form id=\"fm1\" action=\"login\" method=\"post\"><input name=\"username\"><input name=\"password\" type=\"password\"><input name=\"validateCode\"><input name=\"captchaToken\" type=\"hidden\"><input name=\"execution\" value=\"fixture-password\"><input name=\"_eventId\" value=\"submit\"><input name=\"geolocation\"><input name=\"deviceFingerprint\"></form>",
+    "mfa_choice": "<form action=\"/cas/login\" method=\"post\"><input name=\"execution\" value=\"fixture-choice\"><input name=\"mfaProvider\" value=\"mfa-sms\"><input name=\"_eventId\" value=\"submit\"></form><form action=\"/cas/login\" method=\"post\"><input name=\"execution\" value=\"fixture-choice\"><input name=\"mfaProvider\" value=\"mfa-gauth\"><input name=\"_eventId\" value=\"submit\"></form>",
+    "totp": "<form id=\"fm1\" action=\"/cas/login\" method=\"post\"><input id=\"accountId\" name=\"accountId\" type=\"hidden\"><input name=\"token\"><input name=\"_eventId\" value=\"submit\"><input name=\"execution\" value=\"fixture-totp\"><input name=\"geolocation\"></form><form id=\"fm3\" action=\"/cas/login\" method=\"post\"><input name=\"_eventId\" value=\"select\"><input name=\"execution\" value=\"fixture-totp\"></form><script>const accountId = 424242; document.getElementById(\"accountId\").value = accountId;</script>",
+    "trust_device": "<form id=\"trustedDeviceForm\" action=\"/cas/login\" method=\"post\"><input name=\"trustDevice\" type=\"checkbox\"><input name=\"deviceName\" value=\"fixture-device\"><input name=\"expiration\" value=\"30\"><input name=\"timeUnit\" value=\"DAYS\"><input name=\"_eventId\" value=\"skip\"><input name=\"execution\" value=\"fixture-trust\"><input name=\"geolocation\"></form>",
+    "enrollment": "<form id=\"fm-confirm-reg-dialog\" method=\"post\"><input name=\"_eventId_submit\" value=\"\"><input name=\"execution\" value=\"fixture-enrollment\"><input name=\"token\"><input name=\"accountName\" value=\"fixture-device\"></form>"
+  },
+  "observed_http_statuses": [
+    302,
+    200,
+    200,
+    200,
+    200,
+    302
+  ],
+  "totp_parameters": {
+    "algorithm": "SHA1",
+    "digits": 6,
+    "period": 30
+  },
+  "totp_vectors": [
+    [
+      59,
+      "287082"
+    ],
+    [
+      1111111109,
+      "081804"
+    ],
+    [
+      1111111111,
+      "050471"
+    ],
+    [
+      1234567890,
+      "005924"
+    ],
+    [
+      2000000000,
+      "279037"
+    ],
+    [
+      20000000000,
+      "353130"
+    ]
+  ],
+  "vector_source": "RFC 6238 SHA-1 test timestamps and public 20-byte ASCII secret, output reduced to six digits"
+}

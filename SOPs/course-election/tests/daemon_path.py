@@ -39,7 +39,7 @@ class Reply(http.server.BaseHTTPRequestHandler):
             data = fixture.page(str(server.token)) + '<script>var electedIds={};electedIds["l105"]=true;</script>'
         elif "queryStdCount" in url.path and server.login_lost:
             self.send_response(302)
-            self.send_header("Location", "https://ng.shmtu.edu.cn/wengine-auth/login?id=170&path=/")
+            self.send_header("Location", "https://sso.shmtu.edu.cn/cas/login?service=fixture")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return

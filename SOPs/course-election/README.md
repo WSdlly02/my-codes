@@ -11,7 +11,7 @@ cargo build --release --bins
 
 # 终端 B，或 Agent；两端必须使用同一个数据目录
 ce=./target/release/course-election
-$ce login 学号
+$ce login --credentials /path/to/.env
 $ce profile list --sync        # 选课轮次及其 profile ID
 $ce profile use 3112           # 进入轮次：打开选课页面、取得 token
 $ce course sync                # 下载该轮次的课程目录与名额，供离线查询
@@ -36,7 +36,7 @@ CLI **不启动、不停止 daemon**。在 daemon 终端按 Ctrl-C 或发送 SIG
 | 命令 | 行为 |
 | --- | --- |
 | status | daemon 概况：登录时长或失效时间、当前 profile、选课页面、名额读取、运行中意图 |
-| login 学号 [--password-stdin] / logout | 登录（凭据交给 daemon 完成 CAS/OCR）/ 退出并清除 Cookie；完成后全部意图结束 |
+| login [--credentials PATH] / logout | 登录（凭据交给 daemon 完成 CAS/OCR）/ 退出并清除 Cookie；完成后全部意图结束 |
 | profile list [--sync] | 选课轮次及其 profile ID；默认读缓存，`--sync` 先从服务器同步 |
 | profile use ID | 进入轮次：**实际打开 defaultPage**（即使 ID 相同）取得 token；其他 profile 的意图随之结束 |
 | course sync | 下载当前 profile 的课程目录和名额到缓存；会重新打开选课页面 |
@@ -91,7 +91,7 @@ CLI（clap） → Unix socket 上的 HTTP（axum） → Runtime（运行中意�
 
 **HTTP/2 保活**：客户端每 10s 发一次 HTTP/2 PING，5s 内没有回应就丢弃这条连接，下个请求新建连接。一条被持续使用的连接永远不会因空闲被回收，如果它在中间链路上悄悄断了，没有 PING 时每个请求都会在上面等满超时（2026-09-24 实测：watch 从 09:28 起每次读取都超时，直到手动停止）。PING 在后台进行，不占用提交路径。
 
-**登录时长**：jwxt 前面有一层 wengine 网关（`ng.shmtu.edu.cn`），Cookie 都没有过期时间，登录能维持多久由服务端决定。daemon 在 `cache/login.json` 记录登录时刻；任何请求第一次被重定向到网关或 CAS 登录页时，记一条"登录已失效：登录后约 Xh Ym"，`status` 也会显示。同一次实测中，持续每秒读取的会话至少维持了 8h09m。**外部浏览器/其他进程仍可使 token 失效**，请避免同时操作。Executor 串行：开抢时刻若正有别的提交在途，这次 fire 会排在它之后。另外时刻 T 以本机时钟为准，开抢前请确认 NTP 已同步。
+**登录时长**：会话有效期由教务系统决定。daemon 在 `cache/login.json` 记录登录时刻；任何请求第一次被重定向到 CAS 登录页时，记一条"登录已失效：登录后约 Xh Ym"，`status` 也会显示。同一次实测中，持续每秒读取的会话至少维持了 8h09m。**外部浏览器/其他进程仍可使 token 失效**，请避免同时操作。Executor 串行：开抢时刻若正有别的提交在途，这次 fire 会排在它之后。另外时刻 T 以本机时钟为准，开抢前请确认 NTP 已同步。
 
 ## 本地 IPC 与数据
 
@@ -103,9 +103,20 @@ CLI 默认输出给人看的文本（课程名取自本地课程映射缓存，�
 
 ## 登录与导出
 
-保留纯 HTTP CAS/网关重定向校验、验证码/OCR、Cookie 恢复和课表导出。密码只在本次请求内传递，不写入意图或日志；不应通过 shell 参数传密码。OCR 图片路径、识别结果、详细请求计时在 **daemon 终端** 输出。
+运行 `course-election login --credentials /path/to/.env`。省略参数时使用调用 CLI 时当前目录的 `.env`。每次登录都会重新读取该文件，格式与 `atrust-rs` 相同。
 
-默认 OCR：`http://10.144.144.64:11434/api/generate`，模型 `qwen3-vl:8b-instruct`。验证码以 0600 保存到临时目录；异常登录响应也保存供诊断。登录前需结束活动意图；登录失败不会继续使用旧账户的会话。课程表导出沿用默认学期计算，也可显式覆盖。
+```dotenv
+USERNAME=学号
+PASSWORD='密码'
+TOTP_BASE32=已绑定身份验证器的Base32密钥
+DEEPSEEK_API_KEY=你的DeepSeek密钥
+```
+
+用户名和密码从文件读取。CLI 环境中的 `TOTP_BASE32` 和 `DEEPSEEK_API_KEY` 优先于文件中的同名值。CLI 将凭据通过本地 Unix socket 交给 daemon，动态口令由 daemon 在登录时生成。
+
+daemon 从教务首页进入 CAS，取算术验证码，将 PNG 图片发送到 DeepSeek 的 `deepseek-flash` 模型。模型返回算式，daemon 在本地计算并随密码表单提交。图片以 0600 保存到临时目录，路径和结果打印在 daemon 终端。CAS 要求二次验证时，daemon 选择身份验证器、在本地生成六位动态口令，并跳过信任设备。密码与动态口令仅发往学校 CAS。
+
+daemon 校验 ticket 回调与本次登录的教务 service 匹配，并验证教务会话后保存 Cookie。登录前需结束活动意图。课程表导出沿用默认学期计算，也可显式覆盖。
 
 ## 验证
 
@@ -114,6 +125,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo build --bins
+python3 tests/cas_login.py
 python3 tests/daemon_path.py
 ```
 

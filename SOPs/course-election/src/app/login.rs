@@ -1,22 +1,23 @@
 use anyhow::{Context, Result, anyhow, bail};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
-use regex::Regex;
+mod captcha;
+mod credentials;
+pub(crate) use credentials::Credentials;
+mod form;
+use captcha::CaptchaSolver;
+use form::{LoginStep, parse_form, totp, totp_answer};
 use reqwest::Url;
-use reqwest::header::{LOCATION, REFERER};
+use reqwest::header::{LOCATION, ORIGIN, REFERER};
 use serde::Deserialize;
-use serde_json::{Value, json};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::app::http::Session;
-use crate::app::support::{BASE_URL, DEFAULT_OCR_MODEL, DEFAULT_OLLAMA_URL};
+use crate::app::support::{BASE_URL, now_ms};
 
 pub(crate) const CAS_HOST: &str = "sso.shmtu.edu.cn";
 const JWXT_HOST: &str = "jwxt.shmtu.edu.cn";
-pub(crate) const GATEWAY_HOST: &str = "ng.shmtu.edu.cn";
 const MAX_REDIRECTS: usize = 10;
 const CAPTCHA_ATTEMPTS: usize = 3;
 
@@ -28,140 +29,128 @@ struct CaptchaChallenge {
     expires_at: i64,
 }
 
-pub(crate) async fn login(username: &str, password: &str) -> Result<Session> {
+pub(crate) async fn login(credentials: Credentials) -> Result<Session> {
+    let generator = totp(&credentials.totp_base32)?;
+    let solver = CaptchaSolver::new(credentials.api_key)?;
     let session = Session::empty()?;
-    let mut redirects = 0;
-    let (mut page_url, mut page) = fetch_login_page(
-        &session,
-        Url::parse(&format!("{BASE_URL}/home.action"))?,
-        &mut redirects,
-    )
-    .await?;
-
-    for attempt in 1..=CAPTCHA_ATTEMPTS {
-        let service = validate_cas_login_url(&page_url)?;
-        let action = checked_url(page_url.join(&form_action(&page)?)?)?;
-        if action.scheme() != "https"
-            || action.host_str() != Some(CAS_HOST)
-            || action.path() != "/cas/login"
-        {
-            bail!("CAS 表单 action 指向非预期主机");
-        }
-        let execution = input_value(&page, "execution")?;
-        let event_id = input_value(&page, "_eventId").unwrap_or_else(|_| "submit".into());
-        let geolocation = input_value(&page, "geolocation").unwrap_or_default();
-        let fingerprint = input_value(&page, "deviceFingerprint").unwrap_or_default();
-        let captcha = fetch_captcha(&session, &page_url).await?;
-        let answer = solve_captcha(&captcha.image).await?;
-        if unix_millis()? >= captcha.expires_at {
-            bail!("验证码在提交前已过期");
-        }
-        let form = [
-            ("username", username),
-            ("password", password),
-            ("validateCode", answer.as_str()),
-            ("captchaToken", captcha.token.as_str()),
-            ("execution", execution.as_str()),
-            ("_eventId", event_id.as_str()),
-            ("geolocation", geolocation.as_str()),
-            ("deviceFingerprint", fingerprint.as_str()),
-        ];
-        let response = session
-            .client()
-            .post(action)
-            .header(REFERER, page_url.as_str())
-            .form(&form)
-            .send()
-            .await
-            .map_err(reqwest::Error::without_url)
-            .context("提交 CAS 登录表单失败")?;
-
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            bail!("用户名或密码错误");
-        }
-        if !response.status().is_redirection() {
-            let status = response.status();
-            let body = response.bytes().await.context("读取 CAS 错误响应失败")?;
-            let path = write_temp_file("cas-error", "html", &body)?;
-            bail!("CAS 返回 {status}，响应已保存到 {}", path.display());
-        }
-        let location = checked_location(response.url(), response.headers().get(LOCATION))?;
-        count_redirect(&mut redirects)?;
-        if is_captcha_rejection(&location) {
-            if attempt == CAPTCHA_ATTEMPTS {
-                bail!("验证码连续 {CAPTCHA_ATTEMPTS} 次识别错误");
-            }
-            eprintln!("验证码识别错误，正在刷新（{attempt}/{CAPTCHA_ATTEMPTS}）");
-            (page_url, page) = fetch_login_page(&session, location, &mut redirects).await?;
-            continue;
-        }
-        validate_ticket_callback(&location, &service)?;
-        let (final_url, _) = fetch_login_page(&session, location, &mut redirects).await?;
-        if final_url.host_str() != Some(JWXT_HOST) || !is_home_path(final_url.path()) {
-            bail!("认证回调未到达教务首页: {}", safe_url(&final_url));
-        }
-        if !session.is_session_valid().await {
-            bail!("CAS 已返回 ticket，但教务系统登录态验证失败");
-        }
-        session.persist_cookies()?;
-        return Ok(session);
+    let entry = session
+        .client()
+        .get(format!("{BASE_URL}/home.action"))
+        .send()
+        .await?;
+    if !entry.status().is_redirection() {
+        bail!("教务入口未跳转到 CAS（HTTP {}）", entry.status());
     }
-    unreachable!()
-}
+    let cas = checked_location(entry.url(), entry.headers().get(LOCATION))?;
+    let service = validate_cas_login_url(&cas)?;
+    let mut response = session
+        .client()
+        .get(cas)
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url)?;
+    let mut captcha_attempts = 0;
+    let mut totp_attempts = 0;
+    let mut previous_step = None;
+    let mut redirects = 1;
+    let mut form_steps = 0;
 
-fn count_redirect(count: &mut usize) -> Result<()> {
-    if *count >= MAX_REDIRECTS {
-        bail!("登录跳转超过 {MAX_REDIRECTS} 次");
-    }
-    *count += 1;
-    Ok(())
-}
-
-async fn fetch_login_page(
-    session: &Session,
-    url: Url,
-    redirects: &mut usize,
-) -> Result<(Url, String)> {
-    let mut url = checked_url(url)?;
     loop {
-        let service = if url.host_str() == Some(CAS_HOST) {
-            Some(validate_cas_login_url(&url)?)
-        } else {
-            None
-        };
-        let response = session
-            .client()
-            .get(url.clone())
-            .send()
-            .await
-            .map_err(reqwest::Error::without_url)
-            .with_context(|| format!("请求登录页面失败: {}", safe_url(&url)))?;
+        let url = response.url().clone();
         if response.status().is_redirection() {
             let next = checked_location(&url, response.headers().get(LOCATION))?;
-            if let Some(service) = service
-                && !is_captcha_rejection(&next)
-            {
-                validate_ticket_callback(&next, &service)?;
+            if url.host_str() == Some(CAS_HOST) {
+                if next.host_str() == Some(JWXT_HOST) {
+                    validate_ticket_callback(&next, &service)?;
+                } else if next.query_pairs().any(|(key, _)| key == "service")
+                    && validate_cas_login_url(&next)? != service
+                {
+                    bail!("CAS 跳转改变了教务 service");
+                }
+            } else if next.host_str() == Some(CAS_HOST) {
+                bail!("认证回调再次跳转到 CAS，教务登录失败");
             }
-            count_redirect(redirects)?;
-            response
-                .bytes()
+            redirects += 1;
+            if redirects > MAX_REDIRECTS {
+                bail!("登录跳转超过 {MAX_REDIRECTS} 次");
+            }
+            response = session
+                .client()
+                .get(next)
+                .send()
                 .await
                 .map_err(reqwest::Error::without_url)?;
-            url = next;
             continue;
         }
+
         let status = response.status();
-        let body = response.text().await.map_err(reqwest::Error::without_url)?;
-        if let Some(reason) = login_page_error(status, &body) {
-            let path = write_temp_file("login-error", "html", body.as_bytes())?;
+        if status == reqwest::StatusCode::UNAUTHORIZED && url.host_str() == Some(CAS_HOST) {
+            bail!("CAS 拒绝认证（HTTP 401）");
+        }
+        let page = response.text().await.map_err(reqwest::Error::without_url)?;
+        if let Some(reason) = login_page_error(status, &page) {
+            let path = write_temp_file("login-error", "html", page.as_bytes())?;
             bail!(
                 "{reason}: {status} {}，响应已保存到 {}",
                 safe_url(&url),
                 path.display()
             );
         }
-        return Ok((url, body));
+        if url.host_str() == Some(JWXT_HOST) {
+            if !session.is_session_valid().await {
+                bail!("CAS 已返回 ticket，但教务系统登录态验证失败");
+            }
+            session.persist_cookies()?;
+            return Ok(session);
+        }
+        form_steps += 1;
+        if form_steps > 12 {
+            bail!("CAS 认证步骤过多");
+        }
+        let mut form = parse_form(&url, &page)?;
+        match form.step {
+            LoginStep::Password => {
+                if captcha_attempts > 0 && !is_captcha_rejection(&url) {
+                    bail!("CAS 拒绝用户名或密码");
+                }
+                if captcha_attempts == CAPTCHA_ATTEMPTS {
+                    bail!("验证码连续 {CAPTCHA_ATTEMPTS} 次识别错误");
+                }
+                captcha_attempts += 1;
+                let challenge = fetch_captcha(&session, &url).await?;
+                let answer = solver.solve(&challenge.image).await?;
+                if now_ms() >= challenge.expires_at {
+                    bail!("验证码在提交前已过期");
+                }
+                form.fields.extend([
+                    ("username".into(), credentials.username.clone()),
+                    ("password".into(), credentials.password.clone()),
+                    ("validateCode".into(), answer),
+                    ("captchaToken".into(), challenge.token),
+                ]);
+            }
+            LoginStep::Totp => {
+                if totp_attempts == 2 {
+                    bail!("CAS 连续两次拒绝动态口令，请检查 TOTP_BASE32 与系统时间");
+                }
+                totp_attempts += 1;
+                form.fields.insert(
+                    "token".into(),
+                    totp_answer(&generator, &mut previous_step).await?,
+                );
+            }
+            LoginStep::SelectTotp | LoginStep::TrustDevice => {}
+        }
+        response = session
+            .client()
+            .post(form.action)
+            .header(ORIGIN, "https://sso.shmtu.edu.cn")
+            .header(REFERER, url.as_str())
+            .form(&form.fields)
+            .send()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .context("提交 CAS 表单失败")?;
     }
 }
 
@@ -194,7 +183,7 @@ fn safe_url(url: &Url) -> String {
 }
 
 async fn fetch_captcha(session: &Session, page_url: &Url) -> Result<CaptchaChallenge> {
-    let url = page_url.join(&format!("captcha?_={}", unix_millis()?))?;
+    let url = page_url.join(&format!("captcha?_={}", now_ms()))?;
     session
         .client()
         .get(url)
@@ -202,58 +191,10 @@ async fn fetch_captcha(session: &Session, page_url: &Url) -> Result<CaptchaChall
         .send()
         .await
         .context("请求验证码失败")?
+        .error_for_status()?
         .json()
         .await
         .context("解析验证码响应失败")
-}
-
-async fn solve_captcha(image: &str) -> Result<String> {
-    let encoded = image
-        .strip_prefix("data:image/png;base64,")
-        .ok_or_else(|| anyhow!("验证码图片不是 PNG data URL"))?;
-    let image = BASE64.decode(encoded).context("验证码图片 base64 无效")?;
-    let image_path = write_temp_file("captcha", "png", &image)?;
-    eprintln!("OCR: {}", image_path.display());
-    let payload = json!({
-        "model": DEFAULT_OCR_MODEL,
-        "system": "识别图片中的数学题，只返回计算结果，不要解释。",
-        "prompt": "计算图片中的算式。",
-        "images": [encoded],
-        "think": false,
-        "stream": false,
-        "options": { "temperature": 0.1 }
-    });
-    let response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()?
-        .post(DEFAULT_OLLAMA_URL)
-        .json(&payload)
-        .send()
-        .await
-        .context("请求本地验证码 OCR 失败")?;
-    let status = response.status();
-    let body = response.text().await?;
-    if !status.is_success() {
-        bail!("验证码 OCR 返回 {status}");
-    }
-    let value: Value = serde_json::from_str(&body).context("解析 OCR 响应失败")?;
-    let answer = value
-        .get("response")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("验证码 OCR 未返回答案"))?;
-    let answer = normalize_ocr_answer(answer)?;
-    eprintln!("识别结果: {answer}");
-    Ok(answer)
-}
-
-fn normalize_ocr_answer(answer: &str) -> Result<String> {
-    answer
-        .trim()
-        .parse::<i64>()
-        .map(|value| value.to_string())
-        .with_context(|| format!("验证码 OCR 结果不是整数: {answer:?}"))
 }
 
 fn write_temp_file(kind: &str, extension: &str, body: &[u8]) -> Result<PathBuf> {
@@ -288,13 +229,10 @@ fn validate_cas_login_url(url: &Url) -> Result<Url> {
         bail!("CAS URL 必须包含唯一 service");
     }
     let service = checked_url(Url::parse(&services[0].1)?)?;
-    let gateway = service.host_str() == Some(GATEWAY_HOST)
-        && service.path() == "/wengine-auth/login"
-        && service.query() == Some("cas_login=true");
     let home = service.host_str() == Some(JWXT_HOST)
         && is_home_path(service.path())
         && service.query().is_none();
-    if !gateway && !home {
+    if !home {
         bail!("CAS service 未指向已知认证回调: {}", safe_url(&service));
     }
     Ok(service)
@@ -345,8 +283,7 @@ fn checked_url(mut url: Url) -> Result<Url> {
     }
     let allowed_path = match url.host_str() {
         Some(CAS_HOST) => url.path() == "/cas/login",
-        Some(GATEWAY_HOST) => url.path() == "/wengine-auth/login",
-        Some(JWXT_HOST) => is_home_path(url.path()) || url.path() == "/wengine-auth/token-login",
+        Some(JWXT_HOST) => is_home_path(url.path()),
         _ => false,
     };
     if url.scheme() != "https"
@@ -361,68 +298,15 @@ fn checked_url(mut url: Url) -> Result<Url> {
     Ok(url)
 }
 
-fn form_action(html: &str) -> Result<String> {
-    for tag in Regex::new(r"(?is)<form\b[^>]*>").unwrap().find_iter(html) {
-        if attr(tag.as_str(), "id").as_deref() == Some("fm1") {
-            return attr(tag.as_str(), "action").ok_or_else(|| anyhow!("#fm1 缺少 action"));
-        }
-    }
-    bail!("CAS 页面缺少 #fm1")
-}
-
-fn input_value(html: &str, name: &str) -> Result<String> {
-    for tag in Regex::new(r"(?is)<input\b[^>]*>").unwrap().find_iter(html) {
-        if attr(tag.as_str(), "name").as_deref() == Some(name) {
-            return Ok(attr(tag.as_str(), "value").unwrap_or_default());
-        }
-    }
-    bail!("CAS 页面缺少字段 {name}")
-}
-
-fn attr(tag: &str, name: &str) -> Option<String> {
-    Regex::new(&format!(
-        r#"(?is)\b{}\s*=\s*["']([^"']*)["']"#,
-        regex::escape(name)
-    ))
-    .ok()?
-    .captures(tag)?
-    .get(1)
-    .map(|value| value.as_str().replace("&amp;", "&"))
-}
-
-fn unix_millis() -> Result<i64> {
-    i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())
-        .context("系统时间超出范围")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use reqwest::Url;
 
     #[test]
-    fn parses_current_form_and_captcha_rejection() {
-        let html =
-            r#"<form id="fm1" action="login"><input value="opaque" name="execution"></form>"#;
-        assert_eq!(form_action(html).unwrap(), "login");
-        assert_eq!(input_value(html, "execution").unwrap(), "opaque");
-        assert!(is_captcha_rejection(
-            &Url::parse("https://sso.shmtu.edu.cn/cas/login?captchaError=true").unwrap()
-        ));
-    }
-
-    #[test]
-    fn ocr_answer_must_be_an_integer() {
-        assert_eq!(normalize_ocr_answer(" 12\n").unwrap(), "12");
-        assert!(normalize_ocr_answer("答案是 12").is_err());
-    }
-
-    #[test]
     fn current_cas_routes_and_rejections() {
         let base = Url::parse("https://jwxt.shmtu.edu.cn/shmtu/home.action").unwrap();
         for target in [
-            "https://ng.shmtu.edu.cn/wengine-auth/login?id=170",
-            "https://jwxt.shmtu.edu.cn/wengine-auth/token-login?wengine-ticket=opaque",
             "https://sso.shmtu.edu.cn/cas/login?service=opaque",
             "http://jwxt.shmtu.edu.cn/shmtu/home.action;jsessionid=opaque?ticket=opaque",
         ] {
@@ -461,35 +345,13 @@ mod tests {
     }
 
     #[test]
-    fn gateway_service_and_callback_must_match() {
-        let mut cas = Url::parse("https://sso.shmtu.edu.cn/cas/login").unwrap();
-        cas.query_pairs_mut().append_pair(
-            "service",
-            "https://ng.shmtu.edu.cn/wengine-auth/login?cas_login=true",
-        );
-        let service = validate_cas_login_url(&cas).unwrap();
-        validate_ticket_callback(
-            &Url::parse("https://ng.shmtu.edu.cn/wengine-auth/login?ticket=secret&cas_login=true")
-                .unwrap(),
-            &service,
-        )
-        .unwrap();
-        for bad in [
-            "https://ng.shmtu.edu.cn/wengine-auth/login?cas_login=false&ticket=secret",
-            "https://jwxt.shmtu.edu.cn/shmtu/home.action?ticket=secret",
-            "https://ng.shmtu.edu.cn/wengine-auth/login?cas_login=true&ticket=",
-            "https://ng.shmtu.edu.cn/wengine-auth/login?cas_login=true&ticket=a&ticket=b",
-        ] {
-            assert!(validate_ticket_callback(&Url::parse(bad).unwrap(), &service).is_err());
+    fn rejects_missing_duplicate_or_mismatched_tickets() {
+        let service = Url::parse("https://jwxt.shmtu.edu.cn/shmtu/home.action").unwrap();
+        for query in ["", "ticket=", "ticket=a&ticket=b", "ticket=a&extra=x"] {
+            let mut callback = service.clone();
+            callback.set_query(Some(query));
+            assert!(validate_ticket_callback(&callback, &service).is_err());
         }
-        cas.query_pairs_mut()
-            .append_pair("service", "https://example.com/");
-        assert!(validate_cas_login_url(&cas).is_err());
-        let mut count = 0;
-        for _ in 0..MAX_REDIRECTS {
-            count_redirect(&mut count).unwrap();
-        }
-        assert!(count_redirect(&mut count).is_err());
     }
 
     #[test]
@@ -521,14 +383,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires CAS_USERNAME/CAS_PASSWORD, OCR access, and an isolated working directory"]
+    #[ignore = "requires a real credentials file and isolated working directory"]
     async fn live_cas_login_and_cookie_restore() {
-        let session = login(
-            &std::env::var("CAS_USERNAME").unwrap(),
-            &std::env::var("CAS_PASSWORD").unwrap(),
-        )
-        .await
-        .unwrap();
+        let path = std::env::var_os("COURSE_ELECTION_TEST_CREDENTIALS").unwrap();
+        let session = login(Credentials::read(std::path::Path::new(&path)).unwrap())
+            .await
+            .unwrap();
         assert!(session.cookies().iter().any(|c| c.name == "JSESSIONID"));
         let saved = crate::app::cache::load_saved_cookies().unwrap();
         assert!(

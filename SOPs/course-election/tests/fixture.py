@@ -17,7 +17,7 @@ def page(token):
 class Tunnel(socketserver.StreamRequestHandler):
     def handle(self):
         first = self.rfile.readline()
-        if first != b"CONNECT jwxt.shmtu.edu.cn:443 HTTP/1.1\r\n":
+        if first not in self.server.allowed_connect:
             self.server.errors.append(f"unexpected CONNECT: {first!r}")
             return
         while self.rfile.readline().strip():
@@ -43,17 +43,18 @@ def find_openssl():
     raise SystemExit("找不到 openssl（本测试需要它生成临时自签证书）")
 
 
-def start_proxy(directory, handler):
+def start_proxy(directory, handler, hosts=("jwxt.shmtu.edu.cn",)):
     """Starts the proxy; returns it and an environment that routes a child process through it."""
     cwd = Path(directory)
     cert, key = cwd / "cert.pem", cwd / "key.pem"
     subprocess.run(
         [find_openssl(), "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
          "-keyout", str(key), "-out", str(cert), "-subj", "/CN=jwxt.shmtu.edu.cn",
-         "-addext", "subjectAltName=DNS:jwxt.shmtu.edu.cn",
+         "-addext", "subjectAltName=" + ",".join(f"DNS:{host}" for host in hosts),
          "-addext", "basicConstraints=critical,CA:FALSE"],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     proxy = Proxy(("127.0.0.1", 0), Tunnel)
+    proxy.allowed_connect = {f"CONNECT {host}:443 HTTP/1.1\r\n".encode() for host in hosts}
     proxy.handler = handler
     proxy.errors = []
     proxy.tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

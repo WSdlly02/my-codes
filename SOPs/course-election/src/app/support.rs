@@ -9,8 +9,6 @@ pub(crate) const BASE_URL: &str = "https://jwxt.shmtu.edu.cn/shmtu";
 pub(crate) const CACHE_DIR: &str = "cache";
 pub(crate) const RETRY_ATTEMPTS: usize = 3;
 pub(crate) const DEFAULT_TIMEOUT_SECS: u64 = 10;
-pub(crate) const DEFAULT_OCR_MODEL: &str = "qwen3-vl:8b-instruct";
-pub(crate) const DEFAULT_OLLAMA_URL: &str = "http://10.144.144.64:11434/api/generate";
 pub(crate) const SEMESTER_ID_ENV: &str = "COURSE_ELECTION_SEMESTER_ID";
 pub(crate) const SEMESTER_ID_OF_AUTUMN_SEMESTER_OF_2025_ACADEMIC_YEAR: i32 = 395;
 

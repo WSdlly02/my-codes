@@ -204,8 +204,8 @@ impl Runtime {
                 // Intents of a replaced context end by themselves once it is published.
                 let what = maintenance.to_string();
                 let login_changes =
-                    matches!(maintenance, Maintenance::Login { .. } | Maintenance::Logout);
-                let logged_in = matches!(maintenance, Maintenance::Login { .. });
+                    matches!(maintenance, Maintenance::Login(_) | Maintenance::Logout);
+                let logged_in = matches!(maintenance, Maintenance::Login(_));
                 let result = self.exec.maintain(maintenance).await;
                 if login_changes {
                     // A failed login also leaves no usable session behind.

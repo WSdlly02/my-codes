@@ -212,12 +212,12 @@ impl Actor {
     async fn maintain(&mut self, maintenance: Maintenance) -> Result<Response> {
         let session = &mut self.session;
         match maintenance {
-            Maintenance::Login { username, password } => {
+            Maintenance::Login(credentials) => {
                 self.profile = None;
                 // Never keep an old login session usable after a failed account change.
                 *session = Session::empty()?;
                 cache::clear_login_state()?;
-                *session = login::login(&username, &password).await?;
+                *session = login::login(credentials).await?;
                 if let Err(e) = cache::save_login_time(now_ms()) {
                     tracing::warn!("保存登录时间失败：{e:#}");
                 }
