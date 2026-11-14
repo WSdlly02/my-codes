@@ -32,52 +32,24 @@
             allowUnfree = true;
           }
           // config;
-          overlays = [
-            inputs.self.overlays.default
-            inputs.self.overlays.exposedPackages
-            inputs.self.overlays.libraryPackages
-          ]
-          ++ overlays;
+          overlays = [ inputs.self.overlays.default ] ++ overlays;
         };
-      overlays = {
-        default = final: prev: {
-          # Overlays here will be applied to all packages
+      overlays.default =
+        final: _prev:
+        import ./Nix/pkgs {
+          pkgs = final;
         };
-        exposedPackages =
-          # Packages here will be exposed and used as libraries in other parts of the flake
-          final: prev:
-          (inputs.self.legacyPackages.${prev.stdenv.hostPlatform.system} or { }).exposedPackages or { };
-        libraryPackages =
-          # Packages here will be used as library but won't be exposed
-          final: prev:
-          (inputs.self.legacyPackages.${prev.stdenv.hostPlatform.system} or { }).libraryPackages or { };
-      };
     }
     // forExposedSystems (
-      system: with (pkgs' { inherit system; }); {
+      system:
+      let
+        pkgs = pkgs' { inherit system; };
+        exposedPackages = import ./Nix/pkgs { inherit pkgs; };
+      in
+      {
         devShells."${system}" = { };
-        formatter."${system}" = nixfmt-tree;
-        legacyPackages."${system}" = {
-          # Packages here won't be exposed and used as a library in other parts of the flake
-
-          exposedPackages = {
-            # Packages here will be exposed and used as libraries in other parts of the flake
-            # Rust packages
-            epson-maintenance = rustPlatform.callPackage ./Nix/pkgs/epson-maintenance.nix { };
-
-            # Other packages
-            ncmdump = callPackage ./Nix/pkgs/ncmdump.nix { };
-
-            # Haskell packages
-            haskellEnv = haskellPackages.callPackage ./Nix/pkgs/haskellEnv.nix { };
-
-            # Python packages
-            python3Env = python3Packages.callPackage ./Nix/pkgs/python3Env.nix { };
-          };
-          libraryPackages = {
-            # Packages here will be used as library but won't be exposed
-          };
-        };
+        formatter."${system}" = pkgs.nixfmt-tree;
+        legacyPackages."${system}" = exposedPackages;
       }
     );
 }
