@@ -2,6 +2,7 @@
 with pkgs;
 {
   epson-maintenance = rustPlatform.callPackage ./epson-maintenance.nix { };
+  mail-watch = rustPlatform.callPackage ./mail-watch.nix { };
 
   # Other packages
   ncmdump = callPackage ./ncmdump.nix { };
