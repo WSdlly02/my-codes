@@ -28,8 +28,14 @@ buildPythonPackage rec {
     hash = "sha256-r7pfojWAamiD9Go4nmdUC0b4pV2kVyFr8dc0KQOBR4A=";
   };
 
+  patches = [ ./transformers-5.patch ./gradio-6.patch ];
+
+  # Keep the wheel metadata in sync with the interpreter's actual package set.
   # BooleanOptionalAction generates the negative spelling itself.
   postPatch = ''
+    substituteInPlace pyproject.toml \
+      --replace-fail 'transformers==4.57.3' 'transformers==${transformers.version}' \
+      --replace-fail 'accelerate==1.12.0' 'accelerate==${accelerate.version}'
     substituteInPlace qwen_tts/cli/demo.py \
       --replace-fail '"--flash-attn/--no-flash-attn"' '"--flash-attn"'
   '';

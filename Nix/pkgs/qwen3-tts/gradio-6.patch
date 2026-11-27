@@ -1,0 +1,33 @@
+--- a/qwen_tts/cli/demo.py
++++ b/qwen_tts/cli/demo.py
+@@ -268,13 +268,7 @@
+     def _gen_common_kwargs() -> Dict[str, Any]:
+         return dict(gen_kwargs_default)
+ 
+-    theme = gr.themes.Soft(
+-        font=[gr.themes.GoogleFont("Source Sans Pro"), "Arial", "sans-serif"],
+-    )
+-
+-    css = ".gradio-container {max-width: none !important;}"
+-
+-    with gr.Blocks(theme=theme, css=css) as demo:
++    with gr.Blocks() as demo:
+         gr.Markdown(
+             f"""
+ # Qwen3 TTS Demo
+@@ -615,7 +609,15 @@
+     gen_kwargs_default = _collect_gen_kwargs(args)
+     demo = build_demo(tts, ckpt, gen_kwargs_default)
+ 
++    theme = gr.themes.Soft(
++        font=[gr.themes.GoogleFont("Source Sans Pro"), "Arial", "sans-serif"],
++    )
++
++    css = ".gradio-container {max-width: none !important;}"
++
+     launch_kwargs: Dict[str, Any] = dict(
++        theme=theme,
++        css=css,
+         server_name=args.ip,
+         server_port=args.port,
+         share=args.share,

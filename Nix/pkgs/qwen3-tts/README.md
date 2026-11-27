@@ -7,7 +7,7 @@ nix build .#qwen-tts --dry-run
 nix develop .#qwen-tts
 ```
 
-The shell provides Python 3.12, Qwen's Python API and CLI, PyTorch and torchaudio built with ROCm, and SoX. The TTS input pins Nixpkgs 25.11 for the Transformers 4 dependency family. Building missing ROCm binaries, especially PyTorch, can take substantial time and disk space. Model weights are fetched on first use into the Hugging Face cache; you can also pass a local model directory.
+The shell provides Python 3.12, Qwen's Python API and CLI, PyTorch and torchaudio built with ROCm, and SoX. The package uses the repository’s locked Nixpkgs Python dependencies with ROCm enabled. Its build patches the Qwen model for Transformers 5 and the demo for Gradio 6, and writes the selected Transformers and Accelerate versions into the Python package metadata. Building missing ROCm binaries, especially PyTorch, can take substantial time and disk space. Model weights are fetched on first use into the Hugging Face cache; you can also pass a local model directory.
 
 ## Check the GPU before downloading weights
 
