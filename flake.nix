@@ -3,6 +3,8 @@
 
   inputs = {
     nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
+    # Qwen3-TTS uses the Transformers 4 / tokenizers 0.22 stack.
+    nixpkgs-tts.url = "github:NixOS/nixpkgs/nixos-25.11";
   };
 
   outputs =
@@ -44,10 +46,15 @@
       system:
       let
         pkgs = pkgs' { inherit system; };
+        tts = import ./Nix/pkgs/qwen3-tts {
+          inherit system;
+          nixpkgs = inputs.nixpkgs-tts;
+        };
         exposedPackages = import ./Nix/pkgs { inherit pkgs; };
       in
       {
-        devShells."${system}" = { };
+        packages."${system}" = lib.optionalAttrs (system == "x86_64-linux") { inherit (tts) qwen-tts; };
+        devShells."${system}" = lib.optionalAttrs (system == "x86_64-linux") { qwen-tts = tts.shell; };
         formatter."${system}" = pkgs.nixfmt-tree;
         legacyPackages."${system}" = exposedPackages;
       }
